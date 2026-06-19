@@ -290,15 +290,17 @@ async fn paper_portfolio(
 }
 
 /// 예수금 직접 설정 — MyPage 예수금 변경 시 paper account cash sync.
+/// `cash` 파라미터는 초기(총) 예수금이며, 잔여예수금 = initial_cash - Σcost_basis 로 계산.
 async fn paper_set_cash(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     Json(body): Json<serde_json::Value>,
 ) -> Json<serde_json::Value> {
     let account = acct(&q);
-    let cash_val = body.get("cash").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let initial_cash = body.get("cash").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let new_cash = with_account_book(&account, |book| {
-        book.cash = cash_val;
+        let cost_basis: f64 = book.positions.values().map(|p| p.cost_basis).sum();
+        book.cash = (initial_cash - cost_basis).max(0.0);
         book.cash
     });
     if account == DEFAULT_ACCOUNT && state.pool.is_none() {

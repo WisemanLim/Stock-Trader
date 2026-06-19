@@ -1,11 +1,5 @@
 {
   "positions": {
-    "042510": {
-      "ticker": "042510",
-      "quantity": 10.0,
-      "avg_price": 8431.264500000001,
-      "cost_basis": 84312.645
-    },
     "000660": {
       "ticker": "000660",
       "quantity": 1.0,
@@ -18,32 +12,38 @@
       "avg_price": 13832.0745,
       "cost_basis": 1383207.45
     },
-    "263860": {
-      "ticker": "263860",
-      "quantity": 161.0,
-      "avg_price": 13491.278046583851,
-      "cost_basis": 2172095.7655
-    },
-    "065370": {
-      "ticker": "065370",
-      "quantity": 100.0,
-      "avg_price": 3670.5505,
-      "cost_basis": 367055.05
+    "042510": {
+      "ticker": "042510",
+      "quantity": 10.0,
+      "avg_price": 8431.264500000001,
+      "cost_basis": 84312.645
     },
     "005930": {
       "ticker": "005930",
-      "quantity": 5.0,
-      "avg_price": 362554.375,
-      "cost_basis": 1812771.875
+      "quantity": 15.0,
+      "avg_price": 356886.85833333334,
+      "cost_basis": 5353302.875
     },
     "208350": {
       "ticker": "208350",
       "quantity": 675.0,
       "avg_price": 2885.43275,
       "cost_basis": 1947667.10625
+    },
+    "263860": {
+      "ticker": "263860",
+      "quantity": 171.0,
+      "avg_price": 13456.813540935675,
+      "cost_basis": 2301115.1155000003
+    },
+    "065370": {
+      "ticker": "065370",
+      "quantity": 100.0,
+      "avg_price": 3670.5505,
+      "cost_basis": 367055.05
     }
   },
-  "cash": 4547487.3582500005,
+  "cash": 11459469.0,
   "realized_pnl": 0.0,
   "realized_by_ticker": {},
   "applied_orders": {},

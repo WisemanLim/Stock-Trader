@@ -108,18 +108,22 @@ function CashTab({ onClose: _onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   const [totalBuy, setTotalBuy] = useState<number>(0);
 
-  // 실제 잔여예수금(risk-engine) + 매수총금액 조회
+  // 매수총금액(cost_basis 합) + 잔여예수금 → 초기 예수금 역산
   useEffect(() => {
     const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
     fetch(`${BFF}/api/portfolio`, { signal: AbortSignal.timeout(3000) })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        // 실제 잔여 예수금으로 입력값 초기화(설정값과 다를 수 있음)
-        if (typeof data?.cash === 'number') setCash(String(Math.round(data.cash)));
-        if (!data?.positions) return;
-        const total = (data.positions as Array<{ cost_basis?: number; avg_price: number; quantity: number }>)
-          .reduce((sum, p) => sum + (p.cost_basis ?? p.avg_price * (p.quantity ?? 0)), 0);
+        if (!data) return;
+        const total = Array.isArray(data.positions)
+          ? (data.positions as Array<{ cost_basis?: number; avg_price: number; quantity: number }>)
+              .reduce((sum, p) => sum + (p.cost_basis ?? p.avg_price * (p.quantity ?? 0)), 0)
+          : 0;
         setTotalBuy(Math.ceil(total));
+        // 초기 예수금 = 잔여예수금 + 매수총금액
+        if (typeof data.cash === 'number') {
+          setCash(String(Math.round(data.cash + total)));
+        }
       })
       .catch(() => {});
   }, []);
@@ -152,16 +156,23 @@ function CashTab({ onClose: _onClose }: { onClose: () => void }) {
   return (
     <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <SmallInput
-        label="예수금 재설정 (잔여 기준, KRW)"
+        label="초기 예수금 설정 (KRW)"
         type="text"
         value={Number(cash.replace(/,/g, '') || 0).toLocaleString()}
         onChange={v => setCash(v.replace(/,/g, ''))}
       />
-      {totalBuy > 0 && (
-        <div style={{ fontSize: 10, color: 'var(--color-muted)' }}>
-          현재 매수총금액: {totalBuy.toLocaleString('ko-KR')}원 (최소 설정 금액)
-        </div>
-      )}
+      {totalBuy > 0 && (() => {
+        const initial = parseInt(cash.replace(/,/g, ''), 10) || 0;
+        const remaining = initial - totalBuy;
+        return (
+          <div style={{ fontSize: 10, color: 'var(--color-muted)', lineHeight: 1.6 }}>
+            매수총금액: {totalBuy.toLocaleString('ko-KR')}원<br />
+            변경 후 잔여예수금: <span style={{ color: remaining >= 0 ? 'var(--color-up)' : 'var(--color-down)', fontWeight: 600 }}>
+              {remaining.toLocaleString('ko-KR')}원
+            </span>
+          </div>
+        );
+      })()}
       {err && <div style={errStyle}>{err}</div>}
       {msg && <div style={okStyle}>{msg}</div>}
       <SmallBtn disabled={loading}>{loading ? '처리 중...' : '변경'}</SmallBtn>
