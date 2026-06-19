@@ -32,9 +32,9 @@
     },
     "263860": {
       "ticker": "263860",
-      "quantity": 171.0,
-      "avg_price": 13456.813540935675,
-      "cost_basis": 2301115.1155000003
+      "quantity": 201.0,
+      "avg_price": 13373.99584825871,
+      "cost_basis": 2688173.1655000006
     },
     "065370": {
       "ticker": "065370",
@@ -43,7 +43,7 @@
       "cost_basis": 367055.05
     }
   },
-  "cash": 11459469.0,
+  "cash": 11072410.950000001,
   "realized_pnl": 0.0,
   "realized_by_ticker": {},
   "applied_orders": {},
