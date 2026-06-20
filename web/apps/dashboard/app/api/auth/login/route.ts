@@ -29,6 +29,18 @@ export async function POST(req: NextRequest) {
   }
 
   updateLastLogin(user.id);
+
+  // 로그인 시 risk-engine cash sync — 회원가입 시 미기동으로 실패했을 경우 복구
+  const BFF_URL = process.env.BFF_URL ?? 'http://localhost:3002';
+  try {
+    await fetch(`${BFF_URL}/api/paper/set-cash`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cash: user.initial_cash }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch { /* BFF/risk-engine 미기동 시 무시 */ }
+
   const token = await signToken({ sub: user.id, email: user.email, name: user.name });
 
   return NextResponse.json({

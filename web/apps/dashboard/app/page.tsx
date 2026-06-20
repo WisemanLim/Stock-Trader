@@ -9,7 +9,10 @@ import { searchStocks } from '@/lib/stocks';
 
 export default async function DashboardPage() {
   const cookieStore = await cookies();
-  const ticker = cookieStore.get('st_ticker')?.value ?? '005930';
+  const rawTicker = cookieStore.get('st_ticker')?.value ?? '005930';
+  // 한글·특수문자 등 무효 ticker 방어 — cookie 오염 시 기본값(005930)으로 폴백
+  // KRX 6자리 숫자 또는 해외 1~5자 알파벳만 허용 — 그 외(7자리 숫자 등) 폴백
+  const ticker = /^([0-9]{6}|[A-Za-z]{1,5})$/.test(rawTicker) ? rawTicker : '005930';
   const persona = cookieStore.get('st_persona')?.value ?? 'swing';
 
   let snapshot: Awaited<ReturnType<typeof getSnapshot>> | null = null;
@@ -99,7 +102,10 @@ export default async function DashboardPage() {
             fontSize: 13,
           }}
         >
-          ⚠ BFF 연결 실패 — ingest/analysis/agents 서비스와 BFF(:3002)를 먼저 기동하세요.
+          ⚠ BFF(:3002) 연결 실패 — 서비스 기동 후 새로고침하세요.
+          <span style={{ color: 'var(--color-muted)', marginLeft: 8, fontSize: 11 }}>
+            로컬: <code>make local-all</code> &nbsp;|&nbsp; 프로덕션: <code>make prod-all</code>
+          </span>
         </div>
       )}
 

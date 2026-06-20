@@ -24,6 +24,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       router.replace('/login');
     } else {
       setChecked(true);
+      if (!sessionStorage.getItem('st_cash_synced')) {
+        sessionStorage.setItem('st_cash_synced', '1');
+        fetch('/api/auth/sync', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
     }
   }, [pathname, router]);
 

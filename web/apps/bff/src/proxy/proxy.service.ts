@@ -31,11 +31,35 @@ export class ProxyService {
     };
   }
 
-  // F6.2 캔들(OHLCV) 프록시 — days 정수 검증 후 ingest 호출.
+  // F6.2 캔들(OHLCV) 프록시 — days 정수 검증 후 ingest 호출. 다운 시 빈 결과 반환.
   async candles(rawTicker: string, rawDays: string | number) {
     const ticker = safeTicker(rawTicker);
     const days = clampDays(rawDays);
-    return this.fetchJson('ingest', `/market/ohlcv/${ticker}?days=${days}`);
+    try {
+      return await this.fetchJson('ingest', `/market/ohlcv/${ticker}?days=${days}`);
+    } catch {
+      return { ticker, bars: [], count: 0 };
+    }
+  }
+
+  // 현재가 — ingest 다운 시 null 반환(차트 폴링 오류 방지).
+  async price(rawTicker: string): Promise<unknown> {
+    const ticker = safeTicker(rawTicker);
+    try {
+      return await this.fetchJson('ingest', `/market/price/${ticker}`);
+    } catch {
+      return null;
+    }
+  }
+
+  // 분봉 — ingest 다운 시 빈 결과 반환.
+  async intraday(rawTicker: string, interval = '5m'): Promise<unknown> {
+    const ticker = safeTicker(rawTicker);
+    try {
+      return await this.fetchJson('ingest', `/market/intraday/${ticker}?interval=${interval}`);
+    } catch {
+      return { ticker, bars: [], count: 0 };
+    }
   }
 
   // 종목 검색 — ingest /krx/stocks/search 프록시. 오류 시 빈 결과 반환.

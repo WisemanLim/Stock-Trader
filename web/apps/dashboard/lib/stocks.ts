@@ -175,6 +175,7 @@ export const KRX_STOCKS: StockEntry[] = [
   { name: '뷰노', ticker: '338220', market: 'KOSDAQ' },
   { name: '루닛', ticker: '328130', market: 'KOSDAQ' },
   { name: '딥노이드', ticker: '315640', market: 'KOSDAQ' },
+  { name: '지니언스', ticker: '241840', market: 'KOSDAQ' },
 ];
 
 /** 이름(contains) 또는 코드(startsWith)로 검색 */

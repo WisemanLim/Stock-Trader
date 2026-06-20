@@ -1,4 +1,5 @@
 """F1 ingest 서비스 시험 — market API (mock FinanceDataReader)."""
+from unittest.mock import patch
 
 
 def test_health(client):
@@ -17,7 +18,8 @@ def test_get_price_ok(client, mock_fdr):
     assert data["price"] == 73500.0
     assert data["volume"] == 1_200_000
     assert "timestamp" in data
-    assert data["source"] == "FinanceDataReader"
+    # multi_source 오케스트레이터 소스 표기 (FDR 성공 시 "fdr")
+    assert data["source"] == "fdr"
 
 
 def test_get_price_uppercase_normalization(client, mock_fdr):
@@ -27,7 +29,13 @@ def test_get_price_uppercase_normalization(client, mock_fdr):
 
 
 def test_get_price_not_found(client, mock_fdr_empty):
-    r = client.get("/market/price/INVALID")
+    # FDR empty → multi_source fallback 모두 실패 → 404
+    from app.services import naver_finance, daum_finance
+    with (
+        patch.object(naver_finance, "get_price", side_effect=ValueError("not found")),
+        patch.object(daum_finance, "get_price", side_effect=ValueError("not found")),
+    ):
+        r = client.get("/market/price/INVALID")
     assert r.status_code == 404
     assert "detail" in r.json()
 
@@ -46,7 +54,13 @@ def test_get_ohlcv_ok(client, mock_fdr):
 
 
 def test_get_ohlcv_empty(client, mock_fdr_empty):
-    r = client.get("/market/ohlcv/UNKNOWN")
+    # FDR empty → multi_source fallback 모두 빈 결과 → 200 count=0
+    from app.services import naver_finance, daum_finance
+    with (
+        patch.object(naver_finance, "get_daily_ohlcv", return_value=[]),
+        patch.object(daum_finance, "get_daily_ohlcv", return_value=[]),
+    ):
+        r = client.get("/market/ohlcv/UNKNOWN")
     assert r.status_code == 200
     data = r.json()
     assert data["count"] == 0

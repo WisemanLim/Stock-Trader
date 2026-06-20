@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import FinanceDataReader as fdr
-import pandas as pd
 
 _CACHE: dict[str, dict] = {}
 _LOCK = threading.Lock()
@@ -73,7 +72,11 @@ def _resample_daily_to_bars(ticker: str, interval: str) -> list[dict]:
 
 
 def fetch_intraday(ticker: str, interval: str = "5m") -> dict:
-    """분봉 데이터 조회. interval: '1m' | '5m'."""
+    """분봉 데이터 조회. interval: '1m' | '5m'.
+
+    소스 우선순위: FDR → Naver Finance → 일봉 다운샘플링 폴백.
+    multi_source 오케스트레이터에 위임 (순환 임포트 방지용 lazy import).
+    """
     if interval not in ("1m", "5m"):
         interval = "5m"
 
@@ -85,29 +88,14 @@ def fetch_intraday(ticker: str, interval: str = "5m") -> dict:
         if cached and (time.time() - cached.get("cached_at", 0)) < ttl:
             return {**cached, "from_cache": True}
 
-    # FDR 분봉 시도 (지원 ticker/provider에서만 성공)
+    # multi_source 오케스트레이터: FDR → Naver → fallback_daily
+    from app.services import multi_source  # lazy import (순환 방지)
     bars: list[dict] = []
-    source = "fallback"
+    source = "fallback_daily"
     try:
-        df = fdr.DataReader(ticker, pd.Timestamp.now() - pd.Timedelta("1d"), interval=interval)
-        if not df.empty:
-            df = df.rename(columns=str.lower)
-            bars = [
-                {
-                    "datetime": str(idx),
-                    "open": float(r.get("open", 0)),
-                    "high": float(r.get("high", 0)),
-                    "low": float(r.get("low", 0)),
-                    "close": float(r.get("close", 0)),
-                    "volume": int(r.get("volume", 0)),
-                }
-                for idx, r in df.iterrows()
-            ][-100:]
-            source = "fdr"
+        bars = multi_source.get_intraday(ticker.upper(), interval)
+        source = bars[0].get("source", "unknown") if bars else "fallback_daily"
     except Exception:
-        pass
-
-    if not bars:
         bars = _resample_daily_to_bars(ticker, interval)
         source = "fallback_daily"
 

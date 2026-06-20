@@ -24,6 +24,7 @@ profile: `python-fastapi` (+ `rust-axum` core, `node-next-nest` web) · domain: 
 | Feature | Service | Status | Notes |
 |---------|---------|--------|-------|
 | F1.1 Price/OHLCV/tickers | ingest | ✅ | FinanceDataReader |
+| F1.6 Multi-source fallback | ingest | ✅ | **FDR → Naver Finance → Daum Finance** auto-fallback — switches source when KRX is in maintenance or FDR is bot-blocked. `GET /krx/data-sources` health check |
 | F1.2 Order book | ingest | ✅ | Price-based simulation |
 | F1.2 Broker WS feed | ingest | ✅ | Real WS / random-walk sim fallback |
 | F1.2 Adaptive flow control | ingest | ✅ | **AIMD rate + priority queue + backpressure** — integrated into `SubscriptionManager` token bucket (opt-in) |
@@ -40,9 +41,9 @@ profile: `python-fastapi` (+ `rust-axum` core, `node-next-nest` web) · domain: 
 | F5 Backtesting | analysis | ✅ | Multi-strategy + RL (…·DPG **reinforce/a2c/ppo·GAE**) + **persistent worker pool·shared memory** |
 | F5 Paper trading | risk-engine | ✅ | Multi-ticker·rolling·5-factor·full VAR(p)·YW + companion complex eigenvalue QR(Schur) radius projection + **multi-account (isolated per-account ledger)** |
 | F6.1 Scalper TUI | apps/tui | ✅ | ratatui order book·P&L |
-| F6.2 Web dashboard | web | ✅ | Next.js + NestJS BFF + **4-quadrant candle chart (5m intraday · hourly pattern · weekday pattern · daily candles, iter-36)** + **dark/light theme toggle · tooltips** + **TopBar ticker+name display with localStorage persistence (iter-35)** + sub-page auto-query on mount (risk/backtest/agents, iter-36) |
+| F6.2 Web dashboard | web | ✅ | Next.js + NestJS BFF + **4-quadrant candle chart (5m intraday · hourly pattern · weekday pattern · daily candles, iter-36)** + **dark/light theme toggle · tooltips** + **TopBar ticker+name display with localStorage persistence (iter-35)** + sub-page auto-query on mount (risk/backtest/agents, iter-36) · **TopBar Korean company-name ticker cookie pollution fix + page.tsx invalid cookie fallback (iter-67)** |
 | F7 Simulation buy/sell | web/risk | ✅ | Dashboard buy▲/sell▼ panel (SimulationPanel) → BFF POST /api/paper/execute → risk-engine paper ledger · **virtual cash tracking (initial ₩100M, deduct on buy / add on sell, iter-38)** → portfolio enriched with current price · name · P&L · weight via BFF (iter-36) |
-| F8 User Auth | web | ✅ | Register/Login (bcryptjs + jose JWT + TOTP otplib), default deposit ₩100M, **Sidebar roll-up MyPage** (password · deposit · TOTP), AuthGuard route protection, SQLite (`node:sqlite` Node 24 built-in, `globalThis` HMR singleton) · **register deposit input `type=number` fix** (iter-63) — `iter-38~39` |
+| F8 User Auth | web | ✅ | Register/Login (bcryptjs + jose JWT + TOTP otplib), default deposit ₩100M, **Sidebar roll-up MyPage** (password · deposit · TOTP), AuthGuard route protection, SQLite (`node:sqlite` Node 24 built-in, `globalThis` HMR singleton) · **register deposit input `type=number` fix** (iter-63) · **deposit `min=1000000` fix — browser step-validity error on multiples of ₩1M resolved** (iter-64) · **auto-login AES-256-GCM encrypted credential storage (iter-69)** — `iter-38~39` |
 | F6.3 Alerts | agents | ✅ | Telegram/Discord webhook |
 | F6.3 Two-way control | agents + risk-engine | ✅ | **remote bot stop(halt)/emergency liquidation + inbound commands (secret auth)** |
 
@@ -144,11 +145,21 @@ make sync                # sync all deps (uv sync + pnpm install)
 make dev-ingest          # individual service (uvicorn --reload, volume mount)
 make dev-analysis / dev-rag / dev-agents / dev-risk / dev-tui / dev-web
 make local-all           # start all services in background (recommended; stops existing first)
+make local-dev           # ENV=dev shortcut
+make local-staging       # ENV=staging shortcut
 make local-stop          # stop all services
 make local-logs          # tail aggregated log
 make local-status        # process status
 make dev-all             # foreground start (blocks terminal, Ctrl-C to stop all)
 make down                # stop all
+
+# ── Production Docker Compose (ENV=prod) ──────────────────
+export AUTH_JWT_SECRET=$(openssl rand -base64 32)
+make prod-all            # start infra + all app containers
+make prod-stop           # stop all containers
+make prod-logs           # tail aggregated log
+make prod-status         # container status
+make prod-build          # build images
 ```
 
 ### MPM (multi-process manager) — `make local-all` (recommended)
@@ -440,7 +451,18 @@ cd web && pnpm -r test
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| `make up` YAML parse error | `:-` in `env_file: [.env.${ENV:-dev}]` | quote value `[".env.${ENV:-dev}"]` (fixed) |
+| `make up` YAML parse error | `:-` in `env_file: [.env.${ENV:-local}]` | quote value `[".env.${ENV:-local}"]` (fixed) |
+| Missing `.env.dev` when ENV not set | compose env_file default was `dev` | changed to `[".env.${ENV:-local}"]` (fixed) |
+| Register deposit "invalid value" browser error | `min="1"` + `step=1000000` mismatch | `min="1000000"` — all ₩1M multiples now valid (fixed) |
+| `make db-reset ENV=dev` leaves PostgreSQL data | `pgdata` volume removal was only an `echo` hint, never executed | now runs `docker volume rm stock-trader_pgdata` (fixed) |
+| Dashboard candle/intraday 400·500 errors (Korean `%EC%...` · `0059307days` etc.) | `TopBar.tsx` `handleSubmit` passed raw input (e.g. Korean company name) to `navigate()` → cookie polluted; `page.tsx` used raw cookie value without validation | `handleSubmit` local-DB fallback + no-op when invalid; `page.tsx` ticker regex guard → fallback to `005930` (iter-67) |
+| Register deposit not reflected after login | `login/route.ts` missing cash sync — if risk-engine was down at registration, sync never retried | `login/route.ts` now calls `POST /api/paper/set-cash` on every successful login (iter-68) |
+| `make db-reset ENV=prod` leaves user data intact | Containers running when `docker volume rm` called → "volume is in use" fails silently (stderr suppressed) | Added `docker compose down` before volume removal (iter-68) |
+| `⚠ BFF connection failed` banner shown even when services are running | `NEXT_PUBLIC_API_BASE` defined in env but `NEXT_PUBLIC_BFF_URL` used in code; `getSnapshot` had no timeout | Renamed to `NEXT_PUBLIC_BFF_URL` in all env files + `AbortSignal.timeout(5000)` + clearer banner with startup commands (iter-68) |
+| Auto-login prompts password re-entry after JWT expiry | Only JWT token was stored — once expired, cannot re-authenticate without credentials | `auth-client.ts` AES-256-GCM encrypted credential storage; `login/page.tsx` decrypts and auto-login on mount (iter-69) |
+| KRX maintenance / FDR bot-block halts price & OHLCV collection | Single FDR source — data gap during KRX downtime | `multi_source.py` FDR→Naver Finance→Daum Finance auto-fallback orchestrator. `GET /krx/data-sources` source health check (iter-72) |
+| Stock search hangs → BFF 3s timeout (e.g. `지니언스` not found) | FDR `StockListing` returns KRX bot-block HTML → `rows=[]` → `_stock_cache_at` never set → FDR re-called on every request | `krx.py` `_CACHE_FAIL_TTL(5m)` — sets timestamp even on failure (5-min retry). `stocks.ts` added 지니언스 (241840) (iter-71) |
+| `/api/candles`, `/api/intraday`, `/api/price` all return 500 when ingest is down | `candles()`·`price/:ticker`·`intraday/:ticker` had no try/catch — `fetchJson` exception propagated as NestJS 500 | `proxy.service.ts` added try/catch to `candles()`, new `price()` and `intraday()` methods returning empty data (`bars:[]`) or `null` on failure. `page.tsx` ticker regex tightened to `/^([0-9]{6}|[A-Za-z]{1,5})$/` (blocks 7-digit corrupt cookies) (iter-70) |
 | `cargo: command not found` | PATH not set | `export PATH=$HOME/.cargo/bin:$PATH` |
 | `Cannot connect to Docker daemon` | Docker Desktop not running | `open -a Docker`, wait ~30s |
 | `finance-datareader not found` | PyPI package name | `finance-datareader` (hyphen) |
@@ -462,6 +484,48 @@ cd web && pnpm -r test
 | Phase C | Analysis | ✅ C-1 VWAP·close_pct (iter-33) · ✅ C-2 Breadth TRIN·ADLine (iter-33) · ✅ C-3 FlowAgent (iter-33) · ✅ C-4 AlertAgent override (iter-33) · ✅ C-5 80-ticker signal/close filter (iter-33) · ✅ C-6 max_short_ratio (iter-33) |
 | Phase D | ESG · Reports | ✅ D-1 ESG proxy score (iter-34) · ✅ D-2 IR report RAG (iter-34) · ✅ D-3 intraday bars (iter-34) · ✅ D-4 intraday indicators (iter-34) · ✅ D-5 ESG widget (iter-34) · ✅ D-6 ESG screener (iter-34) |
 
+> iter-70 done: ✅ BFF 500 fix when ingest is down + ticker cookie validation hardening
+> - **Problem**: `GET /api/candles·/api/intraday·/api/price` returned 500 whenever ingest service was not running
+> - **Fix**: `proxy.service.ts` — `candles()` wrapped in try/catch → `{ ticker, bars:[], count:0 }`; new `price()` → `null`; new `intraday()` → `{ ticker, bars:[], count:0 }` on failure
+> - **Fix**: `proxy.controller.ts` — `price/:ticker` and `intraday/:ticker` now call new resilient service methods
+> - **Fix**: `page.tsx` — ticker cookie regex `/^[A-Za-z0-9]{1,20}$/` → `/^([0-9]{6}|[A-Za-z]{1,5})$/` (7-digit corrupt values now fall back to `005930`)
+> - Same fixes applied to pub-Stock-Trader
+>
+> iter-69 done: ✅ F8.16 Auto-login encrypted credential storage
+> - **Problem**: "자동로그인" checkbox had no effect after JWT expiry — only the token was stored, not the credentials
+> - **Fix**: `auth-client.ts` — Web Crypto API AES-256-GCM (PBKDF2 key derivation) `saveEncryptedCreds` / `loadEncryptedCreds` / `clearEncryptedCreds`
+> - **Fix**: `login/page.tsx` — when auto-login checked: encrypt and store credentials; on mount: decrypt → auto-call `/api/auth/login` → redirect home on success; on failure (password changed etc.): invalidate stored creds and show form; "자동 로그인 중…" loading UI added
+> - **Fix**: `clearSession` — automatically clears stored credentials on logout (`clearCreds=true`)
+> - Same fix applied to pub-Stock-Trader
+>
+> iter-68 done: ✅ Three bug fixes: deposit sync, db-reset volume, BFF connection error
+> - **Deposit sync**: `login/route.ts` now calls `BFF POST /api/paper/set-cash` on every login — recovers when registration-time sync failed because risk-engine was not yet running
+> - **db-reset prod**: Added `docker compose --profile app down` + `docker compose down` before `docker volume rm` — resolves "volume is in use" silent failure
+> - **BFF banner**: `NEXT_PUBLIC_API_BASE` → `NEXT_PUBLIC_BFF_URL` in `.env.local` and `.env.prod`; `getSnapshot` `AbortSignal.timeout(5000)` added; banner now shows `make local-all` / `make prod-all` commands
+> - Same fixes applied to pub-Stock-Trader
+>
+> iter-67 done: ✅ Dashboard ticker cookie pollution bug fix (400/500 errors)
+> - **Root cause ①**: `TopBar.tsx` `handleSubmit` else branch — when input is not a 6-digit code and `suggestions.length === 0`, `navigate(t)` was called with raw text (e.g. Korean company name "지니어스") → stored as `st_ticker` cookie → `/api/candles/%EC%...` → 400
+> - **Root cause ②**: `page.tsx` — `cookieStore.get('st_ticker')?.value` passed directly to all BFF calls without validation → 500 errors on polluted cookie
+> - **Fix ①**: `handleSubmit` else → `searchStocks(t,1)` local DB fallback; use `handleSelect` if found, otherwise no navigation
+> - **Fix ②**: `page.tsx` ticker regex guard `/^[A-Za-z0-9]{1,20}$/` — invalid values fall back to `005930`
+> - Same fix applied to pub-Stock-Trader
+>
+> iter-66 done: ✅ `make db-reset` PostgreSQL not cleared for dev/staging/prod — bug fix
+> - **Root cause**: non-local branch of `db-reset` only printed `echo` hint for `docker volume rm stock-trader_pgdata` — auth.db deleted but PostgreSQL (paper_fills·pgvector·OHLCV) left intact
+> - **Fix**: execute `docker volume rm stock-trader_pgdata` for real. Same fix applied to pub-Stock-Trader
+>
+> iter-65 done: ✅ F8.15 register deposit not reflected in risk-engine — bug fix
+> - **Root cause**: `register/route.ts` saved `initial_cash` to SQLite only — missing `POST /paper/set-cash` sync to risk-engine. Risk-engine kept its default cash (₩100M) regardless of the value entered at registration
+> - **Fix**: added BFF→risk-engine cash sync to `register/route.ts` (same pattern as `change-cash/route.ts`, 2s timeout, silently ignored if BFF/risk-engine not running)
+>
+> iter-64 done: ✅ Env/DB boot fixes + F8.14 register deposit step-validity fix + prod-* Makefile targets
+> - **docker-compose.yml env_file default fix**: `[".env.${ENV:-dev}"]` → `[".env.${ENV:-local}"]` (7 services) — boot failure when ENV unset and `.env.dev` absent
+> - **postgres healthcheck DB name added**: `pg_isready -U app` → `pg_isready -U app -d stock_trader` — prevents false-healthy when port is open but DB not yet ready
+> - **register deposit `min` fix**: `min="1"` → `min="1000000"` — browser rejected ₩15,000,000 etc. as invalid due to `step=1000000` mismatch
+> - **prod-* Makefile targets added**: `prod-all`·`prod-stop`·`prod-logs`·`prod-status`·`prod-build` — Docker Compose production shortcuts
+> - **missing env files added**: `.env.example`·`.env.prod` (root)·`core/risk-engine/.env.prod`
+>
 > iter-63 done: ✅ F10.1 Sidebar service status — real-time health polling
 > - **Root cause**: `StatusDot` hardcoded to `var(--color-up)` which is red (Korean stock convention) → always appeared red regardless of actual status
 > - **BFF new endpoint**: `GET /api/services/health` — parallel health checks for ingest, analysis, agents, risk (2s timeout each)

@@ -8,6 +8,8 @@ import {
   generateQrDataUrl,
 } from '@/lib/server/auth-core';
 
+const BFF_URL = process.env.BFF_URL ?? 'http://localhost:3002';
+
 export async function POST(req: NextRequest) {
   const { email, name, password, initial_cash } = await req.json();
 
@@ -34,6 +36,16 @@ export async function POST(req: NextRequest) {
 
   const uri = getTotpUri(email, totpSecret);
   const qr = await generateQrDataUrl(uri);
+
+  // risk-engine paper account cash 초기값 동기화 (미기동 시 무시)
+  try {
+    await fetch(`${BFF_URL}/api/paper/set-cash`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cash }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch { /* BFF/risk-engine 미기동 시 무시 */ }
 
   const token = await signToken({ sub: user.id, email: user.email, name: user.name });
 

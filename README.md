@@ -24,6 +24,7 @@ profile: `python-fastapi` (+ `rust-axum` 코어, `node-next-nest` 웹) · domain
 | 기능                     | 서비스               | 상태 | 비고                                                                                                                                                                                                                                   |
 | ------------------------ | -------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | F1.1 시세·OHLCV·종목     | ingest               | ✅   | FinanceDataReader                                                                                                                                                                                                                      |
+| F1.6 멀티소스 폴백       | ingest               | ✅   | **FDR → Naver Finance → Daum Finance** 자동 폴백 — KRX 시스템 점검·봇차단 시 대안 소스 자동 전환. `GET /krx/data-sources` 소스 헬스체크                                                                                              |
 | F1.2 호가창              | ingest               | ✅   | 가격기반 시뮬레이션                                                                                                                                                                                                                    |
 | F1.2 브로커 WS 피드      | ingest               | ✅   | 실 WS 연동 / random-walk 시뮬 폴백                                                                                                                                                                                                     |
 | F1.2 적응형 흐름제어     | ingest               | ✅   | **AIMD 처리율 + 우선순위 큐 + 백프레셔** — `SubscriptionManager` 토큰버킷에 통합(옵트인)                                                                                                                                               |
@@ -40,9 +41,9 @@ profile: `python-fastapi` (+ `rust-axum` 코어, `node-next-nest` 웹) · domain
 | F5 백테스팅              | analysis             | ✅   | 다전략 + RL(…·DPG **reinforce/a2c/ppo·GAE**) + **영속 워커풀·공유메모리(persistent)**                                                                                                                                                  |
 | F5 가상체결              | risk-engine          | ✅   | 다종목·롤링·5요인·full VAR(p)·YW + companion 복소 고유값 QR(Schur) 반경 사영 + **계정 다중화(account별 격리 원장)**                                                                                                                    |
 | F6.1 스캘퍼 TUI          | apps/tui             | ✅   | ratatui 호가창·P&L                                                                                                                                                                                                                     |
-| F6.2 웹 대시보드         | web                  | ✅   | Next.js + NestJS BFF + **4분면 캔들 차트(5분봉·시간대별·요일별·일봉, iter-36)** + **다크/라이트 테마 토글·툴팁** + **TopBar 종목코드+기업명 표시·localStorage 영속(iter-35)** + 서브페이지 자동조회(리스크·백테스팅·에이전트, iter-36) |
+| F6.2 웹 대시보드         | web                  | ✅   | Next.js + NestJS BFF + **4분면 캔들 차트(5분봉·시간대별·요일별·일봉, iter-36)** + **다크/라이트 테마 토글·툴팁** + **TopBar 종목코드+기업명 표시·localStorage 영속(iter-35)** + 서브페이지 자동조회(리스크·백테스팅·에이전트, iter-36) · **TopBar 한글 회사명 ticker 오염 버그 수정 + page.tsx cookie 무효값 폴백(iter-67)** |
 | F7 시뮬레이션 매수/매도  | web/risk             | ✅   | 대시보드 매수▲/매도▼ 패널(SimulationPanel) → BFF POST /api/paper/execute → risk-engine 가상체결 원장 · **예수금 추적(초기 1억원, 매수차감/매도가산, iter-38)** → 포트폴리오 현재가·종목명·손익·비중 BFF 보강(iter-36)                  |
-| F8 사용자 인증           | web                  | ✅   | 회원가입/로그인(bcryptjs+jose JWT+TOTP otplib), 예수금 기본 1억원, **Sidebar 롤업 마이페이지**(비밀번호·예수금·TOTP), AuthGuard 라우트 보호, SQLite(`node:sqlite` Node 24 내장, `globalThis` HMR 싱글톤) · **회원가입 예수금 입력 `type=number` 수정**(iter-63) — `iter-38~39`                |
+| F8 사용자 인증           | web                  | ✅   | 회원가입/로그인(bcryptjs+jose JWT+TOTP otplib), 예수금 기본 1억원, **Sidebar 롤업 마이페이지**(비밀번호·예수금·TOTP), AuthGuard 라우트 보호, SQLite(`node:sqlite` Node 24 내장, `globalThis` HMR 싱글톤) · **회원가입 예수금 입력 `type=number` 수정**(iter-63) · **예수금 `min=1000000` 수정 — 100만원 단위 step 유효값 오류 해소**(iter-64) · **자동로그인 AES-256-GCM 암호화 자격증명 저장(iter-69)** — `iter-38~39`                |
 | F6.3 알림                | agents               | ✅   | Telegram/Discord webhook                                                                                                                                                                                                               |
 | F6.3 양방향 제어         | agents + risk-engine | ✅   | **봇 중지(halt)/긴급청산 원격 제어 + 인바운드 명령(시크릿 인증)**                                                                                                                                                                      |
 
@@ -152,6 +153,14 @@ make local-logs          # 통합 로그 tail
 make local-status        # 프로세스 상태
 make dev-all             # 포그라운드 기동 (터미널 점유, Ctrl-C 전체 종료)
 make down                # 전체 중단
+
+# ── 프로덕션 Docker Compose (ENV=prod) ────────────────────
+export AUTH_JWT_SECRET=$(openssl rand -base64 32)
+make prod-all            # 인프라 + 전체 앱 컨테이너 기동
+make prod-stop           # 전 컨테이너 중지
+make prod-logs           # 통합 로그 tail
+make prod-status         # 컨테이너 상태
+make prod-build          # 이미지 빌드
 ```
 
 ### MPM(멀티프로세스 매니저) — `make local-all` (권장)
@@ -480,7 +489,18 @@ cd web && pnpm -r test
 
 | 이슈                                           | 원인                                           | 조치                                                             |
 | ---------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
-| `make up` YAML 파싱 오류                       | `env_file: [.env.${ENV:-dev}]` 의 `:-`         | 값 인용 `[".env.${ENV:-dev}"]` (수정 완료)                       |
+| `make up` YAML 파싱 오류                       | `env_file: [.env.${ENV:-local}]` 의 `:-`        | 값 인용 `[".env.${ENV:-local}"]` (수정 완료)                     |
+| ENV 미지정 시 `.env.dev` 없음 오류             | compose env_file 기본값이 `dev`                 | `env_file: [".env.${ENV:-local}"]` 로 수정 완료                  |
+| 회원가입 예수금 15000000 유효하지 않음 오류    | `min="1"` + `step=1000000` 불일치              | `min="1000000"` 으로 수정 완료 — 100만원 배수 전부 유효          |
+| `make db-reset ENV=dev` 후 PostgreSQL 데이터 잔존 | `pgdata` 볼륨 삭제가 `echo` 힌트만 출력, 미실행 | `docker volume rm stock-trader_pgdata` 실제 실행으로 수정 완료   |
+| 대시보드 캔들/intraday 400·500 오류 (한글·`%EC%...`·`0059307days` 등) | TopBar `handleSubmit` 미검증 입력으로 한글 회사명이 `st_ticker` 쿠키 오염 + `page.tsx` cookie 무검증 전달 | `handleSubmit` 로컬 DB 폴백·무효 시 이동 안 함 + `page.tsx` ticker regex 검증·무효 시 `005930` 폴백 (iter-67) |
+| 회원가입 예수금 risk-engine 미반영 (로그인 후에도) | `login/route.ts` cash sync 누락 — 등록 시 risk-engine 미기동이면 register sync 실패, 이후 로그인 시 복구 안 됨 | `login/route.ts` 로그인 성공 시 `POST /api/paper/set-cash` 추가 (iter-68) |
+| `make db-reset ENV=prod` 후 회원정보 잔존 | 컨테이너 실행 중 `docker volume rm` → "volume is in use" 실패 (2>/dev/null 로 묻힘) | `docker compose down` 선행 추가 — 볼륨 마운트 해제 후 삭제 (iter-68) |
+| `⚠ BFF 연결 실패` 배너 — 서비스 기동 후에도 표시 | `NEXT_PUBLIC_API_BASE` 정의·`NEXT_PUBLIC_BFF_URL` 미정의 불일치 + `getSnapshot` 타임아웃 없음 | `NEXT_PUBLIC_BFF_URL` 으로 통일 + `AbortSignal.timeout(5000)` 추가 (iter-68) |
+| 자동로그인 체크 후에도 재시작 시 비밀번호 재입력 | JWT 토큰만 저장 — 만료 후 재인증 불가 | `auth-client.ts` AES-256-GCM 암호화 자격증명 저장(`saveEncryptedCreds`/`loadEncryptedCreds`). `login/page.tsx` 마운트 시 복호화 → 자동 로그인 시도 (iter-69) |
+| KRX 시스템 점검·FDR 봇차단 시 시세·OHLCV·분봉 수집 중단 | FDR 단일 소스 의존 — KRX 점검 시 데이터 공백 | `multi_source.py` FDR→Naver Finance→Daum Finance 자동 폴백 오케스트레이터. `GET /krx/data-sources` 소스 헬스체크 (iter-72) |
+| 종목 검색 시 hang → BFF 3s 타임아웃 (`지니언스` 등 미포함 종목) | FDR `StockListing` KRX 봇차단 HTML 반환 → `rows=[]` → `_stock_cache_at` 미설정 → 매 요청마다 FDR 재호출 | `krx.py` `_CACHE_FAIL_TTL(5m)` 추가 — 실패 시에도 타임스탬프 설정. `stocks.ts` 지니언스(241840) 추가 (iter-71) |
+| ingest 미기동 시 `/api/candles·/api/intraday·/api/price` 모두 500 | BFF `candles()`·`price/:ticker`·`intraday/:ticker` try/catch 없어 `fetchJson` 예외가 NestJS 500으로 전파 | `proxy.service.ts` 3메서드 try/catch 추가 — 빈 결과(`bars:[]`) 또는 `null` 반환. `page.tsx` ticker 검증 강화(`/^([0-9]{6}|[A-Za-z]{1,5})$/`, 7자리 숫자 등 폴백) (iter-70) |
 | `cargo: command not found`                     | PATH 미설정                                    | `export PATH=$HOME/.cargo/bin:$PATH`                             |
 | `Cannot connect to Docker daemon`              | Docker Desktop 미실행                          | `open -a Docker` 후 ~30초 대기                                   |
 | `finance-datareader not found`                 | PyPI 패키지명                                  | `finance-datareader` (하이픈)                                    |
@@ -495,18 +515,23 @@ cd web && pnpm -r test
 > ⚠️ **보안 원칙**: 실 시크릿(DB 비밀번호, API 키, JWT 시크릿 등)은 파일에 절대 기재하지 않습니다.
 > HashiCorp Vault 또는 K8s External Secrets Operator를 통해 런타임 주입합니다.
 
-### `make prod-all` 이란?
+### `make prod-all` — Docker Compose 프로덕션 기동
 
-현재 Makefile에 `prod-all` 단독 타겟은 없습니다. 환경별 실행 방법은 아래 표를 참고하세요.
+| 명령 | 동작 |
+|------|------|
+| `make prod-all` | 인프라(postgres+redis) + 전체 앱 컨테이너 기동 (`ENV=prod` 고정) |
+| `make prod-stop` | 전 컨테이너 중지 |
+| `make prod-logs` | 통합 로그 tail |
+| `make prod-status` | 컨테이너 상태 확인 |
+| `make prod-build` | 이미지 빌드 |
 
-| 목적 | 명령 | 비고 |
-|------|------|------|
-| 로컬 프로세스 매니저 (prod 환경변수) | `make local-all ENV=prod` | `.env.prod` 참조, 호스트 직접 실행 |
-| Docker Compose 전체 스택 | `make up-app ENV=prod` | `.env.prod` 참조, 컨테이너 실행 |
-| Docker 이미지 빌드 | `make build ENV=prod` | `docker compose --profile app build` |
-| K8s Helm 배포 | `make deploy` | `helm upgrade --install stock-trader ./deploy/helm` |
+```bash
+export AUTH_JWT_SECRET=$(openssl rand -base64 32)
+make prod-all
+```
 
-> 현재 `deploy/helm` 차트가 미생성 상태입니다. 배포 전 Helm 차트를 먼저 작성해야 합니다.
+> `make local-all ENV=prod` 은 호스트 직접 실행(호스트 프로세스), `make prod-all` 은 Docker Compose 컨테이너 실행. 역할 다름.
+> K8s Helm 배포는 `make deploy` → `helm upgrade --install stock-trader ./deploy/helm`.
 
 ### 환경 설정 — `.env.prod`
 
@@ -664,6 +689,41 @@ Vault에서 시크릿을 갱신하면 External Secrets Operator가 `refreshInter
 | Phase C | 분석 고도화 | ✅ C-1 VWAP·close_pct(iter-33) · ✅ C-2 Breadth TRIN·ADLine(iter-33) · ✅ C-3 FlowAgent 수급분석(iter-33) · ✅ C-4 AlertAgent 경보 override(iter-33) · ✅ C-5 80종 signal/close 필터(iter-33) · ✅ C-6 max_short_ratio(iter-33)    |
 | Phase D | ESG·리포트  | ✅ D-1 ESG 프록시 점수(iter-34) · ✅ D-2 IR보고서 RAG(iter-34) · ✅ D-3 분봉 수집(iter-34) · ✅ D-4 분봉 지표(iter-34) · ✅ D-5 ESG 위젯(iter-34) · ✅ D-6 ESG 스크리너(iter-34)                                                   |
 
+> 차수69 완료: ✅ F8.16 자동로그인 암호화 자격증명 저장
+> - **문제**: JWT 만료 후 재방문 시 자동로그인 체크해도 비밀번호 재입력 필요 — 토큰만 저장, 자격증명 미저장
+> - **수정**: `auth-client.ts` — Web Crypto API AES-256-GCM(PBKDF2 키 도출) `saveEncryptedCreds`/`loadEncryptedCreds`/`clearEncryptedCreds` 추가
+> - **수정**: `login/page.tsx` — 자동로그인 체크 시 암호화 자격증명 저장. 마운트 시 저장된 자격증명 복호화 → 자동 `/api/auth/login` 호출 → 성공 시 홈 이동. 실패(비밀번호 변경 등) 시 자격증명 무효화 후 폼 표시. "자동 로그인 중…" 로딩 UI 추가
+> - **수정**: `clearSession` — 로그아웃 시 저장 자격증명 자동 삭제(`clearCreds=true`)
+> - pub-Stock-Trader 동일 수정 반영
+>
+> 차수68 완료: ✅ 예수금 동기화 복구·db-reset 볼륨 삭제·BFF 연결 오류 3종 수정
+> - **예수금 sync**: `login/route.ts` 로그인 성공 시 `BFF POST /api/paper/set-cash` 추가 — 회원가입 시 risk-engine 미기동으로 sync 실패했을 경우 로그인 때 복구
+> - **db-reset prod**: `docker volume rm` 전 `docker compose --profile app down` + `docker compose down` 선행 추가 — 컨테이너 실행 중 볼륨 삭제 실패("volume is in use") 해소
+> - **BFF 연결 배너**: `NEXT_PUBLIC_API_BASE` → `NEXT_PUBLIC_BFF_URL` 통일 (`.env.local`·`.env.prod`) + `getSnapshot` `AbortSignal.timeout(5000)` 추가 + 배너 메시지에 `make local-all`/`make prod-all` 안내 추가
+> - pub-Stock-Trader 동일 수정 반영
+>
+> 차수67 완료: ✅ 대시보드 종목 검색 ticker 오염 버그 수정 (400/500 오류)
+> - **근본 원인 ①**: `TopBar.tsx` `handleSubmit` else 분기 — 6자리 숫자 아니고 suggestions 없을 때 `navigate(t)` 로 raw 입력(한글 회사명 등)이 `st_ticker` 쿠키에 저장 → `/api/candles/%EC%...` 400 오류
+> - **근본 원인 ②**: `page.tsx` — `cookieStore.get('st_ticker')?.value` 무검증 그대로 전체 BFF 호출 전달 → 쿠키 오염 시 500 오류
+> - **수정 ①**: `handleSubmit` else → `searchStocks(t,1)` 로컬 DB 폴백, 결과 있으면 `handleSelect`, 없으면 이동 안 함
+> - **수정 ②**: `page.tsx` ticker regex 검증 `/^[A-Za-z0-9]{1,20}$/` 추가 — 무효 시 `005930` 폴백
+> - pub-Stock-Trader 동일 수정 반영
+>
+> 차수66 완료: ✅ `make db-reset` dev/staging/prod PostgreSQL 미삭제 버그 수정
+> - **근본 원인**: `db-reset` non-local 분기에서 `docker volume rm stock-trader_pgdata` 가 `echo` 힌트로만 출력, 실제 실행 안 됨 — auth.db만 삭제되고 PostgreSQL(paper_fills·pgvector·OHLCV) 잔존
+> - **수정**: `pgdata` 볼륨 실제 삭제 실행 추가. pub-Stock-Trader 동일 수정 반영
+>
+> 차수65 완료: ✅ F8.15 회원가입 예수금 risk-engine 미반영 버그 수정
+> - **근본 원인**: `register/route.ts`가 SQLite(`auth.db`)에 `initial_cash` 저장 후 risk-engine `POST /paper/set-cash` sync 누락 — 회원가입 시 입력한 예수금과 무관하게 risk-engine은 기본값(1억) 유지
+> - **수정**: `register/route.ts`에 `change-cash/route.ts`와 동일한 BFF→risk-engine cash sync 추가 (2s timeout, 미기동 시 무시)
+>
+> 차수64 완료: ✅ 환경별 구동 방식 수정 + F8.14 회원가입 예수금 step 유효값 오류 수정 + prod-* Makefile 타겟 추가
+> - **docker-compose.yml env_file 기본값 수정**: `env_file: [".env.${ENV:-dev}"]` → `[".env.${ENV:-local}"]` (7개 서비스) — ENV 미지정 시 `.env.dev` 로드 시도 실패 버그
+> - **postgres healthcheck DB명 추가**: `pg_isready -U app` → `pg_isready -U app -d stock_trader` — DB 없이 포트만 열린 상태를 healthy로 오판하던 버그 해소
+> - **예수금 `min` 수정**: 회원가입 폼 `min="1"` → `min="1000000"` — `step=1000000`과 불일치로 15000000 등 정상값이 "유효하지 않은 값" 브라우저 오류 표시되던 버그
+> - **prod-* Makefile 타겟 추가**: `prod-all`·`prod-stop`·`prod-logs`·`prod-status`·`prod-build` — Docker Compose 프로덕션 전용 단축키
+> - **누락 env 파일 추가**: `.env.example`·`.env.prod`(루트)·`core/risk-engine/.env.prod`
+>
 > 차수63 완료: ✅ F10.1 사이드바 서비스 상태 실시간 헬스체크
 > - **원인**: `StatusDot` 하드코딩(`var(--color-up)` = 적색) → 실제 상태와 무관하게 항상 적색 표시
 > - **BFF 신규 엔드포인트**: `GET /api/services/health` — ingest·analysis·agents·risk 병렬 헬스체크(2s timeout)

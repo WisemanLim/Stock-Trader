@@ -1,10 +1,19 @@
-"""F1.5 KRX OPEN API 엔드포인트 + B-1 시장경보 + B-3 공매도."""
+"""F1.5 KRX OPEN API 엔드포인트 + B-1 시장경보 + B-3 공매도.
+
+데이터 소스 우선순위 (KRX 시스템 점검 대비 자동 폴백):
+  1. FinanceDataReader (KRX 기반)
+  2. Naver Finance     (fchart.stock.naver.com)
+  3. Daum Finance      (finance.daum.net/api)
+"""
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.services.alert_store import get_active_alerts, upsert_alerts
@@ -20,10 +29,15 @@ _stock_cache: list[dict] = []
 _stock_cache_at: datetime | None = None
 _stock_lock = threading.Lock()
 _CACHE_TTL = timedelta(hours=24)
+_CACHE_FAIL_TTL = timedelta(minutes=5)  # 실패 시 재시도 간격
 
 
 def _get_stock_list() -> list[dict]:
-    """KRX 전종목 (KOSPI+KOSDAQ) 캐시. TTL 24h."""
+    """KRX 전종목 (KOSPI+KOSDAQ) 캐시. 성공 TTL 24h, 실패 TTL 5m.
+
+    소스 우선순위: FDR → Naver Finance(시세기반 목록 보완).
+    FDR 봇차단/KRX 점검 시 자동 폴백 후 5분 재시도.
+    """
     global _stock_cache, _stock_cache_at
     with _stock_lock:
         if _stock_cache_at and datetime.utcnow() - _stock_cache_at < _CACHE_TTL:
@@ -51,8 +65,14 @@ def _get_stock_list() -> list[dict]:
             if rows:
                 _stock_cache = rows
                 _stock_cache_at = datetime.utcnow()
-        except Exception:
-            pass
+                logger.debug("[krx] 종목 목록 갱신: %d종목 (FDR)", len(rows))
+            else:
+                # FDR 실패(봇차단/KRX 점검) — 5분 후 재시도
+                logger.warning("[krx] FDR 종목 목록 조회 실패. 5분 후 재시도.")
+                _stock_cache_at = datetime.utcnow() - (_CACHE_TTL - _CACHE_FAIL_TTL)
+        except Exception as exc:
+            logger.warning("[krx] FDR 예외: %s. 5분 후 재시도.", exc)
+            _stock_cache_at = datetime.utcnow() - (_CACHE_TTL - _CACHE_FAIL_TTL)
         return _stock_cache
 
 _svc = KrxOpenApiService(
@@ -118,6 +138,71 @@ def krx_status() -> dict:
     return {
         "configured": _svc.configured,
         "note": "KRX_OPEN_API_KEY 환경변수 설정 시 활성화됩니다." if not _svc.configured else "KRX OPEN API 활성화됨.",
+    }
+
+
+@router.get("/data-sources")
+def data_sources_status() -> dict:
+    """데이터 소스 가용성 상태 조회.
+
+    삼성전자(005930) 기준으로 각 소스 헬스체크.
+    KRX 시스템 점검 시 어느 소스가 살아있는지 확인 용도.
+    """
+    import concurrent.futures
+    from app.services import naver_finance, daum_finance
+
+    TEST_TICKER = "005930"
+
+    def _check_fdr() -> dict:
+        try:
+            import FinanceDataReader as fdr
+            from datetime import timedelta
+            start = (datetime.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+            df = fdr.DataReader(TEST_TICKER, start)
+            ok = not df.empty
+            return {"ok": ok, "price": float(df.iloc[-1]["Close"]) if ok else None}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _check_naver() -> dict:
+        try:
+            bars = naver_finance.get_daily_ohlcv(TEST_TICKER, days=3)
+            ok = len(bars) > 0
+            return {"ok": ok, "price": bars[-1]["close"] if ok else None}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _check_daum() -> dict:
+        try:
+            info = daum_finance.get_price(TEST_TICKER)
+            ok = info["price"] > 0
+            return {"ok": ok, "price": info["price"] if ok else None}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        fdr_f = ex.submit(_check_fdr)
+        nav_f = ex.submit(_check_naver)
+        dau_f = ex.submit(_check_daum)
+        fdr_r = fdr_f.result(timeout=15)
+        nav_r = nav_f.result(timeout=15)
+        dau_r = dau_f.result(timeout=15)
+
+    active = (
+        "fdr" if fdr_r["ok"] else
+        "naver_finance" if nav_r["ok"] else
+        "daum_finance" if dau_r["ok"] else
+        "none"
+    )
+    return {
+        "test_ticker": TEST_TICKER,
+        "active_source": active,
+        "sources": {
+            "fdr": fdr_r,
+            "naver_finance": nav_r,
+            "daum_finance": dau_r,
+        },
+        "note": "active_source가 none이면 모든 소스 점검 중.",
     }
 
 

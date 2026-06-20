@@ -135,7 +135,7 @@ export default function RegisterPage() {
                 type="number"
                 value={initialCash}
                 onChange={e => setInitialCash(e.target.value)}
-                min="1"
+                min="1000000"
                 step="1000000"
                 placeholder="100000000"
                 style={inputStyle}

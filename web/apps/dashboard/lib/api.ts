@@ -42,6 +42,7 @@ export async function getSnapshot(
 ): Promise<DashboardSnapshot> {
   const res = await fetch(`${BFF_URL}/api/dashboard/${ticker}?persona=${persona}`, {
     cache: 'no-store',
+    signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) {
     throw new Error(`BFF dashboard ${ticker} → ${res.status}`);

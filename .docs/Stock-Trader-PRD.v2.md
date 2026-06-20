@@ -134,6 +134,30 @@
 [Fallback]       ──→ random-walk 시뮬 (개발/테스트 전용)
 ```
 
+#### F1.6 멀티소스 데이터 폴백 아키텍처 ✅ (iter-72 구현 완료)
+
+**배경**: KRX 시스템 점검·FDR 봇차단 시 주식 데이터 수집 중단 방지.
+
+**소스 우선순위**:
+
+| 순위 | 소스 | 엔드포인트 | 인증 | 제공 데이터 |
+|------|------|-----------|------|-------------|
+| 1 | FinanceDataReader (KRX) | KRX OPEN API 경유 | 불필요 | 일별 OHLCV, 가격, 분봉 |
+| 2 | **Naver Finance** | `fchart.stock.naver.com/siseJson.naver` | 불필요 (EUC-KR) | 일별 OHLCV, 가격, 분봉(1m→5m 집계) |
+| 3 | **Daum Finance** | `finance.daum.net/api/quote/{code}/days` | Referer 헤더 | 일별 OHLCV, 현재가 |
+
+**구현 컴포넌트**:
+- `services/ingest/app/services/naver_finance.py` — Naver Finance 수집기 (EUC-KR 파싱, 일별/분봉)
+- `services/ingest/app/services/daum_finance.py` — Daum Finance 수집기 (JSON, Referer 헤더)
+- `services/ingest/app/services/multi_source.py` — 폴백 오케스트레이터 (FDR→Naver→Daum)
+
+**폴백 동작**:
+- 소스 예외 → 다음 소스 자동 전환 (warn 로그)
+- 소스 빈 결과(`[]`) → 다음 소스 시도 → 모두 빈 경우 빈 리스트 반환
+- 모두 실패(예외) → 마지막 예외 전파 → 404
+
+**신규 엔드포인트**: `GET /krx/data-sources` — 삼성전자(005930) 기준 3개 소스 병렬 헬스체크, `active_source` 필드로 현재 가용 소스 표시.
+
 - **KRX OPEN API 1차 적재**: `stk_bydd_trd`(유가증권), `ksq_bydd_trd`(코스닥) 일별 배치 수집. 2010년 이후 전체 히스토리 적재.
 - **실 브로커 WebSocket**: KIS Open API (`h0stasp0`, `h0stcnt0` 등 체결/호가 구독). 폴백 시뮬레이터 유지.
 - **데이터 계층 분리**: TimeSeries DB(일별) vs StreamBuffer(실시간)
@@ -609,10 +633,11 @@
 
 | 항목 | 규격 |
 |---|---|
-| 입력 필드 | 이메일, 성명, 비밀번호(8자↑), 비밀번호 확인, 예수금(기본 1억 KRW, `type=number` 입력 — 포맷 커서 리셋 버그 방지) |
+| 입력 필드 | 이메일, 성명, 비밀번호(8자↑), 비밀번호 확인, 예수금(기본 1억 KRW, `type=number` `min=1000000` `step=1000000`) |
 | TOTP 설정 | 회원가입 완료 후 QR코드 표시 → 앱 스캔 → 6자리 코드 확인 → 활성화(나중에 설정 가능) |
 | 중복 검사 | 이메일 unique 제약, 409 Conflict 반환 |
 | 즉시 활성 | 승인 워크플로 없이 가입 즉시 활성 |
+| risk-engine sync | 회원가입 완료 시 BFF `POST /api/paper/set-cash` 호출로 risk-engine 초기 예수금 동기화 (미기동 시 무시) |
 
 ### F8.2 로그인 (`/login`)
 
@@ -721,8 +746,16 @@
 | v2.12 | 2026-06-18 | F7.6 예수금 sync 버그 수정: `change-cash/route.ts` fire-and-forget → `await`(try/catch) 변경으로 race condition 해소. 포지션 소멸은 risk-engine 인메모리 특성(재시작 시 초기화) 안내. |
 | v2.13 | 2026-06-18 | F7.7 매수총금액 = 매수시단가×수량: Rust `Position.cost_basis: f64` 추가(매수 시 `+= fill_price×qty`, 매도 시 비례 차감). 포트폴리오 `buy_amount` 컬럼 `cost_basis` 우선 사용, 범례 "매수시단가×수량" 변경. |
 | v2.14 | 2026-06-18 | F6.2.13 URL 파라미터 숨김: ticker·persona를 URL 쿼리스트링 대신 쿠키(`st_ticker`/`st_persona`, 30일)로 전달. TopBar `navigate()` → cookie 설정 후 `router.push('/')`. `app/page.tsx` → `next/headers cookies()` 읽기(searchParams 제거). 주소창 항상 `/` 표시. |
+| v2.37 | 2026-06-20 | F1.6 멀티소스 폴백 아키텍처(iter-72): KRX 시스템 점검·FDR 봇차단 대비 Naver Finance + Daum Finance 자동 폴백. `naver_finance.py`(일별/분봉, EUC-KR) + `daum_finance.py`(일별/현재가, Referer) + `multi_source.py`(FDR→Naver→Daum 오케스트레이터). `finance_reader.py` multi_source 위임. `intraday.py` FDR→Naver→일봉다운샘플 3단 폴백. `GET /krx/data-sources` 소스 헬스체크 엔드포인트. `test_multi_source.py` 14개 시험 PASS(182/182 전체 통과). |
+| v2.36 | 2026-06-20 | FDR KRX 봇차단 시 검색 hang 수정(iter-71): ① `krx.py` `_CACHE_FAIL_TTL = timedelta(minutes=5)` 상수 추가. ② `rows=[]`(봇차단 HTML 반환) 분기에서도 `_stock_cache_at` 설정 — 5분 후 재시도. ③ 최외곽 `except` 동일 처리. 기존: 실패 시 `_stock_cache_at=None` 유지 → 매 검색요청마다 FDR 재호출 → hang → BFF 3s 타임아웃. ④ `stocks.ts` 정적 목록에 `지니언스(241840, KOSDAQ)` 추가. pub-Stock-Trader는 이미 적용, Stock-Trader 동기화. |
+| v2.35 | 2026-06-20 | BFF ingest 미기동 시 500 오류 수정(iter-70): ① `proxy.service.ts` `candles()` try/catch 추가 → `{ ticker, bars:[], count:0 }` 반환. ② `price()` 신규 메서드(try/catch → `null` 반환). ③ `intraday()` 신규 메서드(try/catch → `{ ticker, bars:[], count:0 }` 반환). ④ `proxy.controller.ts` `price/:ticker`·`intraday/:ticker` → 새 서비스 메서드 사용. ⑤ `page.tsx` ticker regex `/^[A-Za-z0-9]{1,20}$/` → `/^([0-9]{6}|[A-Za-z]{1,5})$/` 강화(7자리 숫자 등 오염 쿠키 차단). pub-Stock-Trader 동일 수정. |
+| v2.34 | 2026-06-20 | F8.16 자동로그인 암호화 자격증명 저장: JWT 만료 후에도 자동로그인 체크 효과 유지. `auth-client.ts` Web Crypto API AES-256-GCM + PBKDF2 키 도출 — `saveEncryptedCreds`/`loadEncryptedCreds`/`clearEncryptedCreds` 추가. `login/page.tsx` 마운트 시 암호화 자격증명 복호화 → 자동 로그인 시도 → 성공 시 홈 이동 / 실패(비밀번호 변경 등) 시 자격증명 무효화 후 폼 표시. "자동 로그인 중…" 로딩 UI. `clearSession` 로그아웃 시 저장 자격증명 자동 삭제. pub-Stock-Trader 동일 수정. |
+| v2.33 | 2026-06-20 | 3종 버그 수정: ① 예수금 sync 복구 — `login/route.ts` 로그인 시 `BFF POST /api/paper/set-cash` 추가(회원가입 시 미기동 실패 복구). ② `make db-reset` prod 볼륨 삭제 실패 — `docker compose --profile app down` + `docker compose down` 선행 추가(컨테이너 실행 중 "volume is in use" 해소). ③ BFF 연결 실패 배너 — `NEXT_PUBLIC_API_BASE`→`NEXT_PUBLIC_BFF_URL` 통일(`.env.local`·`.env.prod`), `getSnapshot` `AbortSignal.timeout(5000)` 추가, 배너에 `make local-all`/`make prod-all` 안내 추가. pub-Stock-Trader 동일 수정. |
+| v2.32 | 2026-06-20 | F6.2.14 대시보드 ticker 오염 버그 수정(400/500 오류): ① `TopBar.tsx` `handleSubmit` else 분기 — suggestions 없을 때 raw 입력(한글 회사명 등)으로 `navigate(t)` 호출 → `st_ticker` 쿠키 오염 → `/api/candles/%EC%...` 400. `searchStocks(t,1)` 로컬 폴백 추가·결과 없으면 이동 안 함으로 수정. ② `page.tsx` — `cookieStore.get('st_ticker')?.value` 무검증 전달 → regex `/^[A-Za-z0-9]{1,20}$/` 검증 추가, 무효 시 `005930` 폴백. pub-Stock-Trader 동일 수정. |
 | v2.31 | 2026-06-19 | F10.1 사이드바 서비스 상태 실시간 헬스체크: BFF `GET /api/services/health` 신규 엔드포인트(ingest·analysis·agents·risk 병렬 2s timeout). Sidebar `StatusDot` 30초 폴링, 절대 색상(UP=#3fb950 초록, DOWN=#f85149 적색, 확인중=#6e7681 회색) — 한국 주식 색상 관례(`var(--color-up)` 적색) 간섭 방지. 툴팁에 정상/연결불가 상태 표시. TS clean. |
 | v2.30 | 2026-06-19 | F5 백테스팅 화면 통합: 규칙기반(SMA교차·RSI임계·MACD·Q-러닝) + 강화학습(DQN/PPO/A2C/QR-DQN) 2탭을 `/backtest` 단일 페이지로 통합. 종목코드 공유 입력창, 규칙기반 마운트 시 자동실행, 거래내역 펼침, 강화학습 수 분 소요 안내. 전략/스크리너 페이지 백테스트 탭 제거 → "↺ 백테스팅 →" 배너로 대체. API 응답 필드 매핑 수정(`total_return_pct/100→total_return`, `num_trades→total_trades`). TS clean. |
+| v2.31 | 2026-06-20 | `make db-reset` PostgreSQL 미삭제 버그 수정: non-local(dev/staging/prod) 분기에서 `docker volume rm stock-trader_pgdata` 가 `echo` 힌트만 출력, 실제 미실행이던 버그 수정 → 실제 볼륨 삭제 실행. auth.db(dashboard-data) + PostgreSQL(pgdata) 동시 초기화. pub-Stock-Trader 동일 수정. |
+| v2.30 | 2026-06-20 | F8.14–F8.15 버그수정 + 환경 구동 수정: ① F8.15 회원가입 예수금 risk-engine 미반영 — `register/route.ts` BFF `POST /api/paper/set-cash` sync 추가(2s timeout, 미기동 시 무시). ② F8.14 예수금 입력 step 유효값 오류 — `min="1"` → `min="1000000"` (`step=1000000` 불일치로 정상값 브라우저 거부). ③ docker-compose.yml `env_file` 기본값 `dev` → `local`(7개 서비스). ④ postgres healthcheck `-d ${POSTGRES_DB}` 추가. ⑤ Makefile `prod-all`·`prod-stop`·`prod-logs`·`prod-status`·`prod-build` 타겟 추가. ⑥ `.env.example`·`.env.prod`·`core/risk-engine/.env.prod` 누락 파일 추가. |
 | v2.29 | 2026-06-19 | F9.4 전략/스크리너 화면 전면 개선 + 행 클릭 버그 수정: ① 스크리너 탭 — RSI범위(min/max)·최소거래량·종가범위(하한/상한) 필터 추가 노출(백엔드 기존 지원). ② 전략 백테스트 탭(신규) — 규칙기반(SMA교차·RSI임계·MACD·Q-러닝)·강화학습(DQN/PPO/A2C/QR-DQN) 전략 선택·실행·결과 지표(총수익률·샤프·낙폭·승률·거래횟수) 표시. ③ BFF `POST /api/backtest/rl` 신규 라우트(algo=DQN→`/backtest/dqn`, PPO→`/backtest/dpg?mode=ppo`, A2C→`/backtest/dpg?mode=a2c`, QRDQN→`/backtest/qrdqn`). ④ `navigateToTicker` 쿠키+localStorage(st_ticker/st_name) 동기 설정 → TopBar 즉시 반영 버그 수정. `window.location.assign('/')` 하드 네비게이션. TS clean. |
 | v2.28 | 2026-06-18 | F9.3 포트폴리오·전략/스크리너 행 클릭 → 대시보드 이동: 보유종목·스캔결과 행 클릭 시 `st_ticker` 쿠키 설정 후 `/` 이동, 대시보드 매수/매도 즉시 접근. cursor: pointer + tooltip 추가. TS clean. |
 | v2.27 | 2026-06-18 | F8.11 버그수정 — 재시작 영속화 강화: `tokio::spawn` 비동기 저장→동기 호출 변경(SIGINT 전 완료 보장). SIGINT/SIGTERM graceful shutdown 훅 추가(종료 전 최종 스냅샷 저장). 원자적 파일 쓰기(`.tmp`→rename으로 손상 방지). Rust 81/81 PASS. |

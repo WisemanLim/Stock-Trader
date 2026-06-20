@@ -1,45 +1,17 @@
-"""FinanceDataReader wrapper — F1.1 시세 파이프라인."""
-from datetime import datetime, timedelta
+"""FinanceDataReader wrapper — F1.1 시세 파이프라인.
 
+FDR 1차 소스, 실패 시 multi_source 오케스트레이터(Naver→Daum) 자동 폴백.
+"""
 import FinanceDataReader as fdr
+from app.services import multi_source
 
 
 class FinanceReaderService:
     def get_price(self, ticker: str) -> dict:
-        end = datetime.today()
-        start = end - timedelta(days=7)
-        df = fdr.DataReader(ticker, start.strftime("%Y-%m-%d"))
-        if df.empty:
-            raise ValueError(f"No data for ticker: {ticker}")
-        last = df.iloc[-1]
-        change = float(last["Change"]) if "Change" in df.columns else 0.0
-        return {
-            "ticker": ticker,
-            "price": float(last["Close"]),
-            "change": change,
-            "change_pct": change,
-            "volume": int(last["Volume"]) if "Volume" in df.columns else 0,
-            "timestamp": df.index[-1].strftime("%Y-%m-%dT%H:%M:%S"),
-            "source": "FinanceDataReader",
-        }
+        return multi_source.get_price(ticker)
 
     def get_ohlcv(self, ticker: str, days: int = 30) -> list[dict]:
-        end = datetime.today()
-        start = end - timedelta(days=days)
-        df = fdr.DataReader(ticker, start.strftime("%Y-%m-%d"))
-        if df.empty:
-            return []
-        bars = []
-        for date, row in df.iterrows():
-            bars.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "open": float(row["Open"]),
-                "high": float(row["High"]),
-                "low": float(row["Low"]),
-                "close": float(row["Close"]),
-                "volume": int(row["Volume"]) if "Volume" in df.columns else 0,
-            })
-        return bars
+        return multi_source.get_ohlcv(ticker, days)
 
     def get_stock_list(self, market: str = "KRX") -> list[dict]:
         try:

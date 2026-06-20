@@ -1,6 +1,7 @@
 # stock-trader — 루트 Makefile (Python + Rust + Node 통합)
 .PHONY: up up-app down dev-analysis dev-rag dev-ingest dev-agents dev-risk dev-tui dev-web \
         local-all local-dev local-staging local-stop local-logs local-status \
+        prod-all prod-stop prod-logs prod-status prod-build \
         dev-all mpm mpm-stop mpm-status mpm-logs mpm-check sync db-reset test-py test-rust test-web test build deploy
 
 # 환경 선택: make <target> ENV=local|dev|staging|prod  (기본 local)
@@ -25,21 +26,25 @@ sync:
 	cd services/agents   && uv sync --dev
 	cd web && pnpm install
 
-# ── 인증 DB 초기화 (사용자 데이터 전체 삭제) ──────────────────────────────────────
-# ⚠  이 명령은 모든 가입 사용자 데이터를 영구 삭제합니다. 복구 불가.
-# 대시보드 auth는 모든 환경에서 SQLite(node:sqlite). PostgreSQL은 분석 서비스 전용.
-# - ENV=local : 로컬 파일 삭제
-# - ENV=dev|staging|prod : Docker 볼륨(dashboard-data) 삭제
+# ── DB 초기화 (사용자·분석 데이터 전체 삭제) ──────────────────────────────────────
+# ⚠  이 명령은 모든 데이터를 영구 삭제합니다. 복구 불가.
+# 대시보드 auth = SQLite(node:sqlite, 모든 환경). PostgreSQL = 분석 서비스 전용.
+# - ENV=local           : auth.db 로컬 파일 삭제
+# - ENV=dev|staging|prod: dashboard-data 볼륨(auth.db) + pgdata 볼륨(PostgreSQL) 삭제
 db-reset:
 ifeq ($(ENV),local)
 	rm -f web/apps/dashboard/data/auth.db
 	@echo "auth.db 삭제 완료 (local·SQLite) — 다음 기동 시 스키마 자동 재생성"
 else
-	@echo "⚠  auth DB 초기화 (ENV=$(ENV), Docker 볼륨)..."
+	@echo "⚠  DB 전체 초기화 (ENV=$(ENV)) — 컨테이너 중지 후 볼륨 삭제..."
+	@ENV=$(ENV) docker compose --profile app down --remove-orphans 2>/dev/null || true
+	@ENV=$(ENV) docker compose down --remove-orphans 2>/dev/null || true
 	@docker volume rm stock-trader_dashboard-data 2>/dev/null \
-	  && echo "dashboard-data 볼륨 삭제 완료 — auth.db 포함" \
-	  || echo "볼륨 없음 (이미 삭제됨)"
-	@echo "※ 분석 서비스 PostgreSQL 초기화: docker volume rm stock-trader_pgdata"
+	  && echo "  ✓ dashboard-data 삭제 (auth.db)" \
+	  || echo "  · dashboard-data 없음 (이미 삭제됨)"
+	@docker volume rm stock-trader_pgdata 2>/dev/null \
+	  && echo "  ✓ pgdata 삭제 (PostgreSQL — paper_fills·pgvector·OHLCV 포함)" \
+	  || echo "  · pgdata 없음 (이미 삭제됨)"
 	@echo "재기동: make up-app ENV=$(ENV)"
 endif
 
@@ -86,6 +91,26 @@ local-logs:
 	tail -f $(MPM_DIR)/mpm.log
 local-status:
 	python3 tools/mpm/mpm.py status
+
+# ── 프로덕션 전체 기동 (Docker Compose, ENV=prod) ────────────────────────────────────
+# AUTH_JWT_SECRET 을 쉘에서 export 한 뒤 실행:
+#   export AUTH_JWT_SECRET=$(openssl rand -base64 32)
+#   make prod-all    # 인프라 + 전체 앱 컨테이너 기동
+#   make prod-stop   # 전 컨테이너 중지
+#   make prod-logs   # 통합 로그 tail
+#   make prod-status # 컨테이너 상태
+#   make prod-build  # 이미지 빌드
+prod-all:
+	ENV=prod docker compose up -d
+	ENV=prod docker compose --profile app up -d
+prod-stop:
+	ENV=prod docker compose --profile app down --remove-orphans
+prod-logs:
+	ENV=prod docker compose --profile app logs -f
+prod-status:
+	ENV=prod docker compose --profile app ps
+prod-build:
+	ENV=prod docker compose --profile app build
 
 # ── 포그라운드 전체 기동 (터미널 점유, 색상 로그) ────────────────────────────────────
 # ※ local-all(백그라운드)과 동시에 실행 금지 — 포트 충돌.

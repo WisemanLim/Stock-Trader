@@ -31,7 +31,7 @@ export class ProxyController {
 
   @Get('price/:ticker')
   price(@Param('ticker') ticker: string) {
-    return this.proxy.fetchJson('ingest', `/market/price/${safeTicker(ticker)}`);
+    return this.proxy.price(ticker);
   }
 
   @Get('indicators/:ticker')
@@ -91,7 +91,7 @@ export class ProxyController {
   // D-3: 분봉 데이터.
   @Get('intraday/:ticker')
   intraday(@Param('ticker') ticker: string, @Query('interval') interval = '5m') {
-    return this.proxy.fetchJson('ingest', `/market/intraday/${safeTicker(ticker)}?interval=${interval}`);
+    return this.proxy.intraday(ticker, interval);
   }
 
   // D-4: 분봉 지표.

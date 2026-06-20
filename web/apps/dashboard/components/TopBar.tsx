@@ -194,7 +194,12 @@ export default function TopBar() {
     } else if (suggestions.length > 0) {
       handleSelect(activeIdx >= 0 ? suggestions[activeIdx] : suggestions[0]);
     } else {
-      navigate(t);
+      // suggestions 없을 때 로컬 DB 폴백 — 한글 회사명 등 ticker 무효 입력 방지
+      const found = searchStocks(t, 1);
+      if (found.length > 0) {
+        handleSelect(found[0]);
+        return;
+      }
     }
     setOpen(false);
   }

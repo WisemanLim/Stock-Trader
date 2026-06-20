@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   storeSession, getToken, getAutoLoginPref, saveAutoLoginPref,
   getRememberedEmail, saveRememberEmail, clearRememberEmail,
+  saveEncryptedCreds, loadEncryptedCreds, clearEncryptedCreds,
 } from '@/lib/auth-client';
 
 export default function LoginPage() {
@@ -17,15 +18,41 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [rememberEmail, setRememberEmail] = useState(false);
   const [autoLogin, setAutoLogin] = useState(true);
+  const [autoLoginAttempting, setAutoLoginAttempting] = useState(false);
 
   useEffect(() => {
-    // 자동로그인: 이미 토큰이 있으면 홈으로
     if (getToken()) { router.replace('/'); return; }
-    // 아이디 기억하기 복원
     const saved = getRememberedEmail();
     if (saved) { setEmail(saved); setRememberEmail(true); }
-    // 자동로그인 선호도 복원
-    setAutoLogin(getAutoLoginPref());
+    const autoPref = getAutoLoginPref();
+    setAutoLogin(autoPref);
+
+    // 자동로그인: 저장된 암호화 자격증명으로 자동 로그인 시도
+    if (autoPref) {
+      setAutoLoginAttempting(true);
+      loadEncryptedCreds().then(async (creds) => {
+        if (!creds) { setAutoLoginAttempting(false); return; }
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: creds.email, password: creds.password }),
+          });
+          const data = await res.json();
+          if (res.ok && !data.totp_required) {
+            storeSession(data.token, data.user, true);
+            router.replace('/');
+          } else {
+            // 비밀번호 변경 등 — 저장 자격증명 무효화, 폼 표시
+            clearEncryptedCreds();
+            setEmail(creds.email);
+            setAutoLoginAttempting(false);
+          }
+        } catch {
+          setAutoLoginAttempting(false);
+        }
+      });
+    }
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -44,12 +71,12 @@ export default function LoginPage() {
         setError(data.error);
         return;
       }
-      // 아이디 기억하기 처리
       if (rememberEmail) saveRememberEmail(email);
       else clearRememberEmail();
-      // 자동로그인 선호도 저장
       saveAutoLoginPref(autoLogin);
-      // 세션 저장 (자동로그인 → localStorage, 아니면 sessionStorage)
+      // 자동로그인 체크 시 암호화 자격증명 저장, 해제 시 삭제
+      if (autoLogin) await saveEncryptedCreds(email, password);
+      else clearEncryptedCreds();
       storeSession(data.token, data.user, autoLogin);
       router.replace('/');
     } catch {
@@ -57,6 +84,17 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (autoLoginAttempting) {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'var(--color-bg)', flexDirection: 'column', gap: 12,
+      }}>
+        <div style={{ fontSize: 13, color: 'var(--color-muted)' }}>자동 로그인 중…</div>
+      </div>
+    );
   }
 
   return (
