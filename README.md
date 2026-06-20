@@ -33,17 +33,18 @@ profile: `python-fastapi` (+ `rust-axum` 코어, `node-next-nest` 웹) · domain
 | F1.4 FastMCP             | ingest               | ✅   | Claude/Gemini 연동                                                                                                                                                                                                                     |
 | F2.1 기술지표            | analysis             | ✅   | RSI·MACD·Bollinger·EMA·SMA·ATR                                                                                                                                                                                                         |
 | F2.2 예측                | analysis             | ✅   | 멀티변량(거시 합성 17종 + **erc_quest_adaptive(적응격자 QuEST)·erc_factor(MP 팩터/노이즈 분리)** + MP 적합도검정 + FinBERT/KR-FinBERT)                                                                                                 |
-| F2.3 스크리너            | analysis             | ✅   | RSI·거래량 필터                                                                                                                                                                                                                        |
+| F2.3 스크리너            | analysis             | ✅   | RSI·거래량 필터 + **펀더멘털 필터(PER·PBR·ROE·부채비율·배당수익률)** + **KRX 점검 시 KOSPI/KOSDAQ 자동 폴백**                                                                                                                         |
+| F2.4 펀더멘털 기업평가   | analysis             | ✅   | **Naver Finance API** — PER·PBR·EPS 실시간 조회. `GET /fundamental/{ticker}`. 16개 주식용어(KOSPI·KOSDAQ·PER·PBR·ROE·EPS·매출액·영업이익·당기순이익·부채비율·배당수익률·이동평균선·거래량·RSI·HTS·MTS) PRD 정의                      |
 | F3.1 멀티에이전트        | agents               | ✅   | Scraper·Analyst·Portfolio·Decision                                                                                                                                                                                                     |
 | F3.3 자가교정 루프       | agents               | ✅   | **전략 드리프트 감시(churn·저신뢰·비중위반) + HOLD 강등·비중 클램프**                                                                                                                                                                  |
 | F3.2 Quant RAG           | rag                  | ✅   | 하이브리드 검색·환각차단 + pgvector 영속화                                                                                                                                                                                             |
-| F4 리스크 엔진           | risk-engine          | ✅   | Stop-Loss·Trailing·일일한도·Fail-Safe                                                                                                                                                                                                  |
+| F4 리스크 엔진           | risk-engine          | ✅   | Stop-Loss·Trailing·일일한도·Fail-Safe + **펀더멘털 규칙 7종(PER·PBR·부채비율 초과→BlockBuy / ROE·RSI·이동평균 데드크로스·거래량 급감→ReducePosition)** · 94 tests · **Postgres fills 영속화(DATABASE_URL_SYNC) + risk-engine-data 볼륨 + `paper_settings` 초기예수금 영속화(iter-70)** |
 | F5 백테스팅              | analysis             | ✅   | 다전략 + RL(…·DPG **reinforce/a2c/ppo·GAE**) + **영속 워커풀·공유메모리(persistent)**                                                                                                                                                  |
 | F5 가상체결              | risk-engine          | ✅   | 다종목·롤링·5요인·full VAR(p)·YW + companion 복소 고유값 QR(Schur) 반경 사영 + **계정 다중화(account별 격리 원장)**                                                                                                                    |
 | F6.1 스캘퍼 TUI          | apps/tui             | ✅   | ratatui 호가창·P&L                                                                                                                                                                                                                     |
 | F6.2 웹 대시보드         | web                  | ✅   | Next.js + NestJS BFF + **4분면 캔들 차트(5분봉·시간대별·요일별·일봉, iter-36)** + **다크/라이트 테마 토글·툴팁** + **TopBar 종목코드+기업명 표시·localStorage 영속(iter-35)** + 서브페이지 자동조회(리스크·백테스팅·에이전트, iter-36) · **TopBar 한글 회사명 ticker 오염 버그 수정 + page.tsx cookie 무효값 폴백(iter-67)** |
 | F7 시뮬레이션 매수/매도  | web/risk             | ✅   | 대시보드 매수▲/매도▼ 패널(SimulationPanel) → BFF POST /api/paper/execute → risk-engine 가상체결 원장 · **예수금 추적(초기 1억원, 매수차감/매도가산, iter-38)** → 포트폴리오 현재가·종목명·손익·비중 BFF 보강(iter-36)                  |
-| F8 사용자 인증           | web                  | ✅   | 회원가입/로그인(bcryptjs+jose JWT+TOTP otplib), 예수금 기본 1억원, **Sidebar 롤업 마이페이지**(비밀번호·예수금·TOTP), AuthGuard 라우트 보호, SQLite(`node:sqlite` Node 24 내장, `globalThis` HMR 싱글톤) · **회원가입 예수금 입력 `type=number` 수정**(iter-63) · **예수금 `min=1000000` 수정 — 100만원 단위 step 유효값 오류 해소**(iter-64) · **자동로그인 AES-256-GCM 암호화 자격증명 저장(iter-69)** — `iter-38~39`                |
+| F8 사용자 인증           | web                  | ✅   | 회원가입/로그인(bcryptjs+jose JWT+TOTP otplib), 예수금 기본 1억원, **Sidebar 롤업 마이페이지**(비밀번호·예수금·TOTP), AuthGuard 라우트 보호, SQLite(`node:sqlite` Node 24 내장, `globalThis` HMR 싱글톤) · **회원가입 예수금 입력 `type=number` 수정**(iter-63) · **예수금 `min=1000000` 수정 — 100만원 단위 step 유효값 오류 해소**(iter-64) · **자동로그인 AES-256-GCM 암호화 자격증명 저장(iter-69)** · **예수금 재기동 후 초기화 버그 수정(페이지 로드 시 60초 주기 재동기화)** — `iter-38~39` |
 | F6.3 알림                | agents               | ✅   | Telegram/Discord webhook                                                                                                                                                                                                               |
 | F6.3 양방향 제어         | agents + risk-engine | ✅   | **봇 중지(halt)/긴급청산 원격 제어 + 인바운드 명령(시크릿 인증)**                                                                                                                                                                      |
 
@@ -689,6 +690,27 @@ Vault에서 시크릿을 갱신하면 External Secrets Operator가 `refreshInter
 | Phase C | 분석 고도화 | ✅ C-1 VWAP·close_pct(iter-33) · ✅ C-2 Breadth TRIN·ADLine(iter-33) · ✅ C-3 FlowAgent 수급분석(iter-33) · ✅ C-4 AlertAgent 경보 override(iter-33) · ✅ C-5 80종 signal/close 필터(iter-33) · ✅ C-6 max_short_ratio(iter-33)    |
 | Phase D | ESG·리포트  | ✅ D-1 ESG 프록시 점수(iter-34) · ✅ D-2 IR보고서 RAG(iter-34) · ✅ D-3 분봉 수집(iter-34) · ✅ D-4 분봉 지표(iter-34) · ✅ D-5 ESG 위젯(iter-34) · ✅ D-6 ESG 스크리너(iter-34)                                                   |
 
+> 차수72 완료: ✅ F9.5 멀티계좌 계좌 sync 전면 수정 + TopBar 중복 key 버그 수정
+> - **계좌 상태 영속화**: `lib/account.ts` 신규(`getAccount`/`setStoredAccount`, localStorage `st_account` + storage 이벤트)
+> - **포트폴리오 페이지**: 진입 시 `localStorage` 복원(항상 default로 초기화되던 버그 수정), 탭 전환 시 `setStoredAccount()` 저장
+> - **SimulationPanel**: 선택 계좌 기준 예수금 조회(`?account=`) + 매수/매도 체결(`?account=`), storage 이벤트 구독으로 실시간 동기화, 비-default 계좌 배지 표시
+> - **MyPagePanel CashTab**: 단일 effect로 경쟁 상태 제거(AbortController), 선택 계좌 잔여예수금 표시, 비-default → `/api/paper/set-cash?account=` 직접 호출
+> - **BFF**: `POST /api/paper/execute` `?account=` 쿼리 포워딩 추가
+> - **TopBar**: 자동완성 `key={s.ticker}` → `key={\`${s.ticker}-${i}\`}` (중복 ticker 시 React key 충돌 버그 수정)
+
+> 차수71 완료: ✅ F9.5 포트폴리오 멀티계좌 기능 추가
+> - **포트폴리오 탭 바**: 선택계좌 파란색, 나머지 회색 — 선택 시 제일 앞 배치
+> - **`+` 버튼**: 계좌명 입력 prompt → `POST /api/paper/set-cash?account=<name>` — 회원가입 시 설정한 초기 예수금 동일 적용 (Rust `with_account_book` 자동 생성)
+> - **`−` 버튼**: confirm 확인 후 `DELETE /api/portfolio/account/<name>` — 보유 포지션 포함 삭제, default 계좌 삭제 불가
+> - **BFF 신규 라우트**: `GET /api/paper/accounts`, `DELETE /api/portfolio/account/:name`, `POST /paper/set-cash?account=` 쿼리 포워딩
+> - **Rust**: `remove_account()` 추가 + `DELETE /paper/account/:name` 엔드포인트
+
+> 차수70 완료: ✅ 예수금 prod-build 재기동 후 초기화 버그 근본 수정
+> - **근본 원인**: Postgres 모드에서 `replay(&fills)` 가 `INITIAL_CASH=100_000_000` 상수에서 시작해 체결 이력만 재계산 — 사용자가 `/paper/set-cash` 로 변경한 초기 예수금이 postgres 에 저장되지 않아 재기동 시 항상 1억원으로 초기화됨
+> - **수정**: `paper_db.rs` — `paper_settings (key text PK, value text)` 테이블 추가·`save_setting` / `load_setting` 함수 추가
+> - **수정**: `main.rs` 시작 시 — fills replay 완료 후 `paper_settings.initial_cash` 로드 → `cash = (initial_cash − cost_basis).max(0)` 재조정
+> - **수정**: `paper_set_cash` 핸들러 — Postgres 모드에서 `initial_cash` 를 `paper_settings` 에 UPSERT. 비-Postgres(local) 에서는 기존 스냅샷 파일 방식 유지
+>
 > 차수69 완료: ✅ F8.16 자동로그인 암호화 자격증명 저장
 > - **문제**: JWT 만료 후 재방문 시 자동로그인 체크해도 비밀번호 재입력 필요 — 토큰만 저장, 자격증명 미저장
 > - **수정**: `auth-client.ts` — Web Crypto API AES-256-GCM(PBKDF2 키 도출) `saveEncryptedCreds`/`loadEncryptedCreds`/`clearEncryptedCreds` 추가

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import backtest, breadth, indicators, intraday_indicators, prediction, screener
+from app.api import backtest, breadth, fundamental, indicators, intraday_indicators, prediction, screener
 from app.core.config import settings
 
 
@@ -28,6 +28,7 @@ app.include_router(screener.router)
 app.include_router(backtest.router)
 app.include_router(breadth.router)
 app.include_router(intraday_indicators.router)  # D-4: 분봉 지표
+app.include_router(fundamental.router)          # F8: 펀더멘털 기업평가
 
 
 @app.get("/health")

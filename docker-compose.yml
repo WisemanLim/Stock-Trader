@@ -10,7 +10,7 @@ services:
       POSTGRES_USER:     ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
       POSTGRES_DB:       ${POSTGRES_DB:-stock_trader}
-    ports: ["5432:5432"]
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-stock_trader}"]
@@ -20,35 +20,41 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    ports: ["6379:6379"]
+    ports: ["${REDIS_PORT:-6379}:6379"]
 
   # ── Python 분석 서비스 ─────────────────────────────────────────────────────────
   analysis:
     profiles: ["app"]
     build: { context: services/analysis }
     env_file: [".env.${ENV:-local}"]
-    ports: ["8001:8001"]
+    ports: ["${ANALYSIS_PORT:-8001}:8001"]
     depends_on: [postgres, redis]
 
   rag:
     profiles: ["app"]
     build: { context: services/rag }
     env_file: [".env.${ENV:-local}"]
-    ports: ["8002:8002"]
+    ports: ["${RAG_PORT:-8002}:8002"]
     depends_on: [postgres, redis]
 
   ingest:
     profiles: ["app"]
     build: { context: services/ingest }
     env_file: [".env.${ENV:-local}"]
-    ports: ["8003:8003"]
+    ports: ["${INGEST_PORT:-8003}:8003"]
     depends_on: [postgres, redis]
 
   agents:
     profiles: ["app"]
     build: { context: services/agents }
     env_file: [".env.${ENV:-local}"]
-    ports: ["8004:8004"]
+    environment:
+      ANALYSIS_URL: "http://analysis:${ANALYSIS_PORT:-8001}"
+      RAG_URL: "http://rag:${RAG_PORT:-8002}"
+      INGEST_URL: "http://ingest:${INGEST_PORT:-8003}"
+      RISK_ENGINE_URL: "http://risk-engine:${RISK_ENGINE_PORT:-3001}"
+      BFF_URL: "http://bff:${BFF_PORT:-3002}"
+    ports: ["${AGENTS_PORT:-8004}:8004"]
     depends_on: [postgres, redis, analysis, rag, ingest]
 
   # ── Rust 리스크/체결 엔진 (F4 Critical — 10ms) ─────────────────────────────────
@@ -58,8 +64,18 @@ services:
       context: .
       dockerfile: core/risk-engine/Dockerfile
     env_file: [".env.${ENV:-local}"]
-    ports: ["3001:3001"]
-    depends_on: [postgres, redis]
+    ports: ["${RISK_ENGINE_PORT:-3001}:${RISK_ENGINE_PORT:-3001}"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    volumes:
+      - risk-engine-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/3001' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
   # ── 웹 대시보드 (F6.2) ──────────────────────────────────────────────────────────
   bff:
@@ -68,8 +84,13 @@ services:
       context: web
       dockerfile: apps/bff/Dockerfile
     env_file: [".env.${ENV:-local}"]
-    ports: ["3002:3002"]
-    depends_on: [postgres, redis, risk-engine]
+    environment:
+      RISK_ENGINE_URL: "http://risk-engine:${RISK_ENGINE_PORT:-3001}"
+    ports: ["${BFF_PORT:-3002}:3002"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+      risk-engine: { condition: service_healthy }
 
   dashboard:
     profiles: ["app"]
@@ -79,9 +100,11 @@ services:
     env_file: [".env.${ENV:-local}"]
     environment:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}  # env_file의 리터럴 ${...} 덮어쓰기; 쉘 export 값 주입
+      NEXT_PUBLIC_BFF_URL: "http://localhost:${BFF_PORT:-3002}"
+      NEXT_PUBLIC_RISK_ENGINE_URL: "http://localhost:${RISK_ENGINE_PORT:-3001}"
     volumes:
       - dashboard-data:/app/apps/dashboard/data
-    ports: ["3000:3000"]
+    ports: ["${DASHBOARD_PORT:-3000}:3000"]
     depends_on: [bff]
 
   # ── Finance 도메인 확장 인프라 (스케일 시 profiles 로 활성화) ─────────────────────
@@ -105,3 +128,4 @@ services:
 volumes:
   pgdata:
   dashboard-data:
+  risk-engine-data:

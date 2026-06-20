@@ -33,17 +33,18 @@ profile: `python-fastapi` (+ `rust-axum` core, `node-next-nest` web) · domain: 
 | F1.4 FastMCP | ingest | ✅ | Claude/Gemini integration |
 | F2.1 Indicators | analysis | ✅ | RSI·MACD·Bollinger·EMA·SMA·ATR |
 | F2.2 Prediction | analysis | ✅ | Multivariate (macro 17 modes + **erc_quest_adaptive (adaptive-grid QuEST)·erc_factor (MP factor/noise split)** + MP goodness-of-fit + FinBERT/KR-FinBERT) |
-| F2.3 Screener | analysis | ✅ | RSI·volume filters |
+| F2.3 Screener | analysis | ✅ | RSI·volume filters + **fundamental filters (PER·PBR·ROE·debt ratio·dividend yield)** + **auto-fallback to KOSPI/KOSDAQ when KRX is under maintenance** |
+| F2.4 Fundamental analysis | analysis | ✅ | **Naver Finance API** — real-time PER·PBR·EPS. `GET /fundamental/{ticker}`. 16 stock terms defined in PRD (KOSPI·KOSDAQ·PER·PBR·ROE·EPS·Revenue·OperatingProfit·NetIncome·DebtRatio·DividendYield·MA·Volume·RSI·HTS·MTS) |
 | F3.1 Multi-agent | agents | ✅ | Scraper·Analyst·Portfolio·Decision |
 | F3.3 Self-correction loop | agents | ✅ | **Strategy-drift monitor (churn·low-confidence·weight-breach) + HOLD downgrade·weight clamp** |
 | F3.2 Quant RAG | rag | ✅ | Hybrid search + hallucination block + pgvector persistence |
-| F4 Risk engine | risk-engine | ✅ | Stop-Loss·Trailing·daily limit·Fail-Safe |
+| F4 Risk engine | risk-engine | ✅ | Stop-Loss·Trailing·daily limit·Fail-Safe + **7 fundamental rules (PER·PBR·debt ratio excess→BlockBuy / ROE·RSI·MA death-cross·volume collapse→ReducePosition)** · 94 tests · **Postgres fills persistence (DATABASE_URL_SYNC) + risk-engine-data volume + `paper_settings` initial-cash persistence (iter-71)** |
 | F5 Backtesting | analysis | ✅ | Multi-strategy + RL (…·DPG **reinforce/a2c/ppo·GAE**) + **persistent worker pool·shared memory** |
 | F5 Paper trading | risk-engine | ✅ | Multi-ticker·rolling·5-factor·full VAR(p)·YW + companion complex eigenvalue QR(Schur) radius projection + **multi-account (isolated per-account ledger)** |
 | F6.1 Scalper TUI | apps/tui | ✅ | ratatui order book·P&L |
 | F6.2 Web dashboard | web | ✅ | Next.js + NestJS BFF + **4-quadrant candle chart (5m intraday · hourly pattern · weekday pattern · daily candles, iter-36)** + **dark/light theme toggle · tooltips** + **TopBar ticker+name display with localStorage persistence (iter-35)** + sub-page auto-query on mount (risk/backtest/agents, iter-36) · **TopBar Korean company-name ticker cookie pollution fix + page.tsx invalid cookie fallback (iter-67)** |
 | F7 Simulation buy/sell | web/risk | ✅ | Dashboard buy▲/sell▼ panel (SimulationPanel) → BFF POST /api/paper/execute → risk-engine paper ledger · **virtual cash tracking (initial ₩100M, deduct on buy / add on sell, iter-38)** → portfolio enriched with current price · name · P&L · weight via BFF (iter-36) |
-| F8 User Auth | web | ✅ | Register/Login (bcryptjs + jose JWT + TOTP otplib), default deposit ₩100M, **Sidebar roll-up MyPage** (password · deposit · TOTP), AuthGuard route protection, SQLite (`node:sqlite` Node 24 built-in, `globalThis` HMR singleton) · **register deposit input `type=number` fix** (iter-63) · **deposit `min=1000000` fix — browser step-validity error on multiples of ₩1M resolved** (iter-64) · **auto-login AES-256-GCM encrypted credential storage (iter-69)** — `iter-38~39` |
+| F8 User Auth | web | ✅ | Register/Login (bcryptjs + jose JWT + TOTP otplib), default deposit ₩100M, **Sidebar roll-up MyPage** (password · deposit · TOTP), AuthGuard route protection, SQLite (`node:sqlite` Node 24 built-in, `globalThis` HMR singleton) · **register deposit input `type=number` fix** (iter-63) · **deposit `min=1000000` fix — browser step-validity error on multiples of ₩1M resolved** (iter-64) · **auto-login AES-256-GCM encrypted credential storage (iter-69)** · **deposit reset-to-default bug fixed (60s re-sync on page load)** — `iter-38~39` |
 | F6.3 Alerts | agents | ✅ | Telegram/Discord webhook |
 | F6.3 Two-way control | agents + risk-engine | ✅ | **remote bot stop(halt)/emergency liquidation + inbound commands (secret auth)** |
 
@@ -484,6 +485,27 @@ cd web && pnpm -r test
 | Phase C | Analysis | ✅ C-1 VWAP·close_pct (iter-33) · ✅ C-2 Breadth TRIN·ADLine (iter-33) · ✅ C-3 FlowAgent (iter-33) · ✅ C-4 AlertAgent override (iter-33) · ✅ C-5 80-ticker signal/close filter (iter-33) · ✅ C-6 max_short_ratio (iter-33) |
 | Phase D | ESG · Reports | ✅ D-1 ESG proxy score (iter-34) · ✅ D-2 IR report RAG (iter-34) · ✅ D-3 intraday bars (iter-34) · ✅ D-4 intraday indicators (iter-34) · ✅ D-5 ESG widget (iter-34) · ✅ D-6 ESG screener (iter-34) |
 
+> iter-73 done: ✅ F9.5 Multi-account sync across all pages + TopBar duplicate key fix
+> - **Account persistence**: new `lib/account.ts` (`getAccount`/`setStoredAccount`, localStorage `st_account` + storage event dispatch)
+> - **Portfolio page**: restores selected account from localStorage on mount (fixed always-reset-to-default bug); calls `setStoredAccount()` on tab switch
+> - **SimulationPanel**: fetches cash and executes trades against selected account (`?account=`); subscribes to storage events for real-time sync; shows account badge for non-default
+> - **MyPagePanel CashTab**: single effect with AbortController to eliminate race condition; shows remaining cash for selected account; non-default → calls `/api/paper/set-cash?account=` directly
+> - **BFF**: added `?account=` query forwarding to `POST /api/paper/execute`
+> - **TopBar**: `key={s.ticker}` → `key={\`${s.ticker}-${i}\`}` (fixes React duplicate key crash when search returns same ticker twice)
+
+> iter-72 done: ✅ F9.5 Portfolio multi-account
+> - **Account tab bar**: selected account in blue, others in gray — selected moves to front
+> - **`+` button**: prompt for account name → `POST /api/paper/set-cash?account=<name>` — uses same initial cash as user registration (Rust `with_account_book` auto-creates)
+> - **`−` button**: confirm dialog → `DELETE /api/portfolio/account/<name>` — deletes account + all positions; default account protected
+> - **BFF new routes**: `GET /api/paper/accounts`, `DELETE /api/portfolio/account/:name`, `POST /paper/set-cash?account=` query forwarding
+> - **Rust**: added `remove_account()` + `DELETE /paper/account/:name` endpoint
+
+> iter-71 done: ✅ Cash reset after prod-build restart — root-cause fix
+> - **Root cause**: In Postgres mode `replay(&fills)` starts from the `INITIAL_CASH=100_000_000` constant and only replays trade fills — the user-set initial cash (via `/paper/set-cash`) was never written to postgres, so every restart reset cash to ₩100M
+> - **Fix**: `paper_db.rs` — added `paper_settings (key text PK, value text)` table, `save_setting` / `load_setting` helpers
+> - **Fix**: `main.rs` startup — after fill replay, loads `paper_settings.initial_cash` and recalculates `cash = (initial_cash − cost_basis).max(0)`
+> - **Fix**: `paper_set_cash` handler — in Postgres mode UPSERTs `initial_cash` to `paper_settings`; non-Postgres (local) keeps existing JSON snapshot path
+>
 > iter-70 done: ✅ BFF 500 fix when ingest is down + ticker cookie validation hardening
 > - **Problem**: `GET /api/candles·/api/intraday·/api/price` returned 500 whenever ingest service was not running
 > - **Fix**: `proxy.service.ts` — `candles()` wrapped in try/catch → `{ ticker, bars:[], count:0 }`; new `price()` → `null`; new `intraday()` → `{ ticker, bars:[], count:0 }` on failure

@@ -102,59 +102,79 @@ function PasswordTab() {
 
 function CashTab({ onClose: _onClose }: { onClose: () => void }) {
   const user = getStoredUser();
+  const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
+  const [account, setAcc] = useState('default');
   const [cash, setCash] = useState(String(user?.initial_cash ?? 100000000));
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [totalBuy, setTotalBuy] = useState<number>(0);
 
-  // 매수총금액(cost_basis 합) + 잔여예수금 → 초기 예수금 역산
+  // 계좌 초기화 + 포트폴리오 조회 (단일 effect — 경쟁 상태 방지)
   useEffect(() => {
-    const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
-    fetch(`${BFF}/api/portfolio`, { signal: AbortSignal.timeout(3000) })
+    let cancelled = false;
+    const acc = (() => { try { return localStorage.getItem('st_account') || 'default'; } catch { return 'default'; } })();
+    setAcc(acc);
+    const ctrl = new AbortController();
+    fetch(`${BFF}/api/portfolio?account=${encodeURIComponent(acc)}`, { signal: ctrl.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (!data) return;
+        if (cancelled || !data) return;
         const total = Array.isArray(data.positions)
           ? (data.positions as Array<{ cost_basis?: number; avg_price: number; quantity: number }>)
               .reduce((sum, p) => sum + (p.cost_basis ?? p.avg_price * (p.quantity ?? 0)), 0)
           : 0;
         setTotalBuy(Math.ceil(total));
-        // 초기 예수금 = 잔여예수금 + 매수총금액
-        if (typeof data.cash === 'number') {
-          setCash(String(Math.round(data.cash + total)));
-        }
+        if (typeof data.cash === 'number') setCash(String(Math.round(data.cash + total)));
       })
       .catch(() => {});
-  }, []);
+    return () => { cancelled = true; ctrl.abort(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     let val = parseInt(cash.replace(/,/g, ''), 10);
     if (!val || val < 0) { setErr('유효한 금액 입력'); return; }
-    // 매수총금액보다 작으면 매수총금액으로 자동 조정
     if (totalBuy > 0 && val < totalBuy) {
       val = totalBuy;
       setCash(String(val));
       setMsg(`매수총금액(${totalBuy.toLocaleString('ko-KR')}원) 이상으로 자동 조정되었습니다.`);
     }
     setLoading(true); setErr('');
-    const res = await fetch('/api/auth/change-cash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({ initial_cash: val }),
-    });
-    const data = await res.json();
-    if (!res.ok) { setErr(data.error); setMsg(''); }
-    else {
-      updateStoredUser({ initial_cash: val });
-      setMsg((prev) => prev || '예수금이 변경되었습니다.');
+
+    if (account === 'default') {
+      // default 계좌: auth DB 갱신 + risk-engine sync
+      const res = await fetch('/api/auth/change-cash', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ initial_cash: val }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.error); setMsg(''); }
+      else {
+        updateStoredUser({ initial_cash: val });
+        setMsg((prev) => prev || '예수금이 변경되었습니다.');
+      }
+    } else {
+      // 비-default 계좌: risk-engine에만 직접 set-cash
+      const res = await fetch(`${BFF}/api/paper/set-cash?account=${encodeURIComponent(account)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cash: val }),
+      });
+      if (!res.ok) { setErr(`변경 실패: ${res.status}`); setMsg(''); }
+      else { setMsg('예수금이 변경되었습니다.'); }
     }
     setLoading(false);
   }
 
   return (
     <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {account !== 'default' && (
+        <div style={{ fontSize: 10, padding: '3px 6px', borderRadius: 3, backgroundColor: 'rgba(88,166,255,0.12)', color: 'var(--color-accent)', fontWeight: 600 }}>
+          계좌: {account}
+        </div>
+      )}
       <SmallInput
         label="초기 예수금 설정 (KRW)"
         type="text"

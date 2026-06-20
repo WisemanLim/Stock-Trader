@@ -33,3 +33,7 @@ class IndicatorsResponse(BaseModel):
     vwap_20: float | None = None
     close_pct: float | None = None
     signal: str
+    ma_5: float | None = None
+    ma_20: float | None = None
+    ma_death_cross: bool = False
+    volume_collapse: bool = False

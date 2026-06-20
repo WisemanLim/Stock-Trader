@@ -1,6 +1,8 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { Tooltip } from '@/components/Tooltip';
+import { TOOLTIPS } from '@/lib/tooltips';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 
@@ -46,15 +48,15 @@ let _results: ScreenerRow[] = [];
 let _meta: { total_scanned: number; matched: number } | null = null;
 let _sortKey: SortKey = 'name', _sortDir: SortDir = 'desc';
 
-const COLUMNS: { key: SortKey; label: string; align: 'left' | 'right' }[] = [
+const COLUMNS: { key: SortKey; label: string; align: 'left' | 'right'; tooltip?: string }[] = [
   { key: 'ticker',      label: '종목코드', align: 'left'  },
   { key: 'name',        label: '종목명',   align: 'left'  },
   { key: 'close',       label: '현재가',   align: 'right' },
-  { key: 'volume',      label: '거래량',   align: 'right' },
-  { key: 'rsi',         label: 'RSI',      align: 'right' },
-  { key: 'signal',      label: '시그널',   align: 'right' },
-  { key: 'esg_score',   label: 'ESG',      align: 'right' },
-  { key: 'short_ratio', label: '공매도%',  align: 'right' },
+  { key: 'volume',      label: '거래량',   align: 'right', tooltip: TOOLTIPS.screener.volumeFilter },
+  { key: 'rsi',         label: 'RSI',      align: 'right', tooltip: TOOLTIPS.screener.rsiFilter },
+  { key: 'signal',      label: '시그널',   align: 'right', tooltip: TOOLTIPS.screener.signal },
+  { key: 'esg_score',   label: 'ESG',      align: 'right', tooltip: TOOLTIPS.screener.esg },
+  { key: 'short_ratio', label: '공매도%',  align: 'right', tooltip: TOOLTIPS.screener.shortFilter },
 ];
 
 // ─── 메인 페이지 ─────────────────────────────────────────────────────────────
@@ -149,7 +151,7 @@ export default function StrategyPage() {
       {/* 필터 바 */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, padding: 16, backgroundColor: 'var(--color-card)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          마켓
+          <Tooltip title="마켓" content={TOOLTIPS.screener.market}>마켓</Tooltip>
           <select value={market} onChange={e => { _market = e.target.value; setMarket(e.target.value); }} style={inp}>
             <option value="KRX">KRX</option>
             <option value="KOSPI">KOSPI</option>
@@ -157,7 +159,7 @@ export default function StrategyPage() {
           </select>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          시그널
+          <Tooltip title="시그널" content={TOOLTIPS.screener.signal}>시그널</Tooltip>
           <select value={signal} onChange={e => { _signal = e.target.value; setSignal(e.target.value); }} style={inp}>
             <option value="">전체</option>
             <option value="BUY">BUY</option>
@@ -166,31 +168,31 @@ export default function StrategyPage() {
           </select>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          RSI 최소
+          <Tooltip title="RSI 범위" content={TOOLTIPS.screener.rsiFilter}>RSI 최소</Tooltip>
           <input type="number" value={rsiMin} onChange={e => { _rsiMin = e.target.value; setRsiMin(e.target.value); }} placeholder="예: 20" min={0} max={100} style={{ ...inp, width: 80 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          RSI 최대
+          <Tooltip title="RSI 범위" content={TOOLTIPS.screener.rsiFilter}>RSI 최대</Tooltip>
           <input type="number" value={rsiMax} onChange={e => { _rsiMax = e.target.value; setRsiMax(e.target.value); }} placeholder="예: 70" min={0} max={100} style={{ ...inp, width: 80 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          최소 거래량
+          <Tooltip title="최소 거래량" content={TOOLTIPS.screener.volumeFilter}>최소 거래량</Tooltip>
           <input type="number" value={minVol} onChange={e => { _minVol = e.target.value; setMinVol(e.target.value); }} placeholder="예: 100000" min={0} style={{ ...inp, width: 110 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          종가 하한 (원)
+          <Tooltip title="종가 범위" content={TOOLTIPS.screener.closeFilter}>종가 하한 (원)</Tooltip>
           <input type="number" value={minClose} onChange={e => { _minClose = e.target.value; setMinClose(e.target.value); }} placeholder="예: 5000" min={0} style={{ ...inp, width: 110 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          종가 상한 (원)
+          <Tooltip title="종가 범위" content={TOOLTIPS.screener.closeFilter}>종가 상한 (원)</Tooltip>
           <input type="number" value={maxClose} onChange={e => { _maxClose = e.target.value; setMaxClose(e.target.value); }} placeholder="예: 100000" min={0} style={{ ...inp, width: 110 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          최소 ESG 점수
+          <Tooltip title="ESG 점수" content={TOOLTIPS.screener.esg}>최소 ESG 점수</Tooltip>
           <input type="number" value={minEsg} onChange={e => { _minEsg = e.target.value; setMinEsg(e.target.value); }} placeholder="예: 40" min={0} max={100} style={{ ...inp, width: 90 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          최대 공매도 (%)
+          <Tooltip title="공매도 비율" content={TOOLTIPS.screener.shortFilter}>최대 공매도 (%)</Tooltip>
           <input type="number" value={maxShort} onChange={e => { _maxShort = e.target.value; setMaxShort(e.target.value); }} placeholder="예: 10" min={0} max={100} style={{ ...inp, width: 90 }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
@@ -222,7 +224,10 @@ export default function StrategyPage() {
                 {COLUMNS.map(col => (
                   <th key={col.key} onClick={() => handleSort(col.key)}
                     style={{ padding: '7px 10px', textAlign: col.align, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', color: sortKey === col.key ? 'var(--color-accent)' : 'var(--color-muted)', backgroundColor: sortKey === col.key ? 'rgba(88,166,255,0.06)' : 'transparent' }}>
-                    {col.label}{sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅'}
+                    {col.tooltip
+                      ? <Tooltip title={col.label} content={col.tooltip}>{col.label}</Tooltip>
+                      : col.label
+                    }{sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅'}
                   </th>
                 ))}
               </tr>

@@ -7,6 +7,9 @@ COPY apps/tui        ./apps/tui
 RUN cargo build --release -p risk-engine
 
 FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/risk-engine /app/risk-engine
 EXPOSE 3001
 CMD ["/app/risk-engine"]

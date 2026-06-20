@@ -7,7 +7,7 @@ mod risk;
 
 use axum::extract::State;
 use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
-use paper::{list_accounts, with_account_book, with_book, OrderRequest, Prepared, DEFAULT_ACCOUNT};
+use paper::{list_accounts, remove_account, with_account_book, with_book, OrderRequest, Prepared, DEFAULT_ACCOUNT};
 use risk::{evaluate, RiskRequest};
 use serde_json::json;
 use sqlx::PgPool;
@@ -22,8 +22,11 @@ struct AppState {
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    // DB 영속화 — DATABASE_URL 이 postgres 면 풀 생성 + 원장 하이드레이션.
-    let dsn = std::env::var("DATABASE_URL").unwrap_or_default();
+    // DB 영속화 — DATABASE_URL_SYNC(postgres://) 우선, 없으면 DATABASE_URL 폴백.
+    // sqlx 는 asyncpg 드라이버(postgresql+asyncpg://)를 지원하지 않으므로 SYNC URL 사용.
+    let dsn = std::env::var("DATABASE_URL_SYNC")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_default();
     let pool = if dsn.starts_with("postgres") {
         match paper_db::init(&dsn).await {
             Some(p) => {
@@ -36,10 +39,24 @@ async fn main() {
                     with_book(|b| b.equity_curve = points);
                     tracing::info!("equity curve hydrated: {} points", n);
                 }
+                // 사용자 설정 초기 예수금 복원 — replay 후 cash 재조정.
+                if let Some(ic_str) = paper_db::load_setting(&p, "initial_cash").await {
+                    if let Ok(initial_cash) = ic_str.parse::<f64>() {
+                        with_book(|b| {
+                            let cost_basis: f64 = b.positions.values().map(|pos| pos.cost_basis).sum();
+                            b.cash = (initial_cash - cost_basis).max(0.0);
+                        });
+                        tracing::info!("initial_cash restored from settings: {initial_cash}");
+                    }
+                }
                 Some(Arc::new(p))
             }
             None => {
                 tracing::warn!("DATABASE_URL set but connect failed → in-memory paper book");
+                if let Some(snap) = paper_db::load_snapshot() {
+                    with_book(|b| b.restore_from_snapshot(snap));
+                    tracing::info!("paper book restored from snapshot (db-fallback)");
+                }
                 None
             }
         }
@@ -60,6 +77,7 @@ async fn main() {
         .route("/paper/execute", post(paper_execute))
         .route("/paper/set-cash", post(paper_set_cash))
         .route("/paper/accounts", get(paper_accounts))
+        .route("/paper/account/{name}", axum::routing::delete(paper_delete_account))
         .route("/control/halt", post(control_halt))
         .route("/control/status", get(control_status))
         .route("/control/liquidate", post(control_liquidate))
@@ -81,7 +99,13 @@ async fn main() {
 
     let port = std::env::var("RISK_ENGINE_PORT").unwrap_or_else(|_| "3001".into());
     let addr = format!("0.0.0.0:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("FATAL: cannot bind {addr} — {e}");
+            std::process::exit(1);
+        }
+    };
     tracing::info!("risk-engine listening on {addr}");
 
     // graceful shutdown — SIGINT(Ctrl+C) / SIGTERM 수신 시 최종 스냅샷 저장 후 종료.
@@ -132,6 +156,21 @@ fn acct(q: &std::collections::HashMap<String, String>) -> String {
 /// 등록된 가상 계정 목록.
 async fn paper_accounts() -> Json<serde_json::Value> {
     Json(json!({ "accounts": list_accounts() }))
+}
+
+/// 계정 삭제 — default 계정 삭제 불가. 보유 포지션도 함께 제거(인메모리).
+async fn paper_delete_account(
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if name == DEFAULT_ACCOUNT {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "ok": false, "reason": "default 계정은 삭제 불가" })));
+    }
+    let removed = remove_account(&name);
+    if removed {
+        (StatusCode::OK, Json(json!({ "ok": true, "account": name })))
+    } else {
+        (StatusCode::NOT_FOUND, Json(json!({ "ok": false, "reason": "계정 없음" })))
+    }
 }
 
 /// F5 가상 체결 — DB-우선 durability(원자성). 영속화 성공 후에만 인메모리 원장 commit.
@@ -303,9 +342,14 @@ async fn paper_set_cash(
         book.cash = (initial_cash - cost_basis).max(0.0);
         book.cash
     });
-    if account == DEFAULT_ACCOUNT && state.pool.is_none() {
-        let snap = with_account_book(&account, |book| book.to_snapshot());
-        paper_db::save_snapshot(&snap);
+    if account == DEFAULT_ACCOUNT {
+        if let Some(pool) = &state.pool {
+            // postgres 모드: initial_cash 영속화 — 재기동 후 replay 완료 시 cash 복원에 사용.
+            let _ = paper_db::save_setting(pool, "initial_cash", &initial_cash.to_string()).await;
+        } else {
+            let snap = with_account_book(&account, |book| book.to_snapshot());
+            paper_db::save_snapshot(&snap);
+        }
     }
     Json(json!({ "ok": true, "account": account, "cash": new_cash }))
 }

@@ -16,6 +16,12 @@ class ScreenerFilter(BaseModel):
     max_short_ratio: float | None = Field(default=None, description="최대 공매도 비율 (0.0~1.0)")
     # D-6: ESG 점수 필터
     min_esg_score: float | None = Field(default=None, description="최소 ESG 점수 (0~100)")
+    # F8: 펀더멘털 필터
+    max_per: float | None = Field(default=None, description="최대 PER (예: 30)")
+    max_pbr: float | None = Field(default=None, description="최대 PBR (예: 3.0)")
+    min_roe: float | None = Field(default=None, description="최소 ROE % (예: 5.0)")
+    max_debt_ratio: float | None = Field(default=None, description="최대 부채비율 % (예: 200)")
+    min_dividend_yield: float | None = Field(default=None, description="최소 배당수익률 % (예: 2.0)")
 
 
 class ScreenerResult(BaseModel):

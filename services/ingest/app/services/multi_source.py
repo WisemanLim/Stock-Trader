@@ -136,29 +136,9 @@ def get_price(ticker: str) -> dict:
 # ── 분봉 ──────────────────────────────────────────────────────────────────
 
 def get_intraday(ticker: str, interval: str = "5m") -> list[dict]:
-    """분봉 데이터. FDR → Naver → 일봉 다운샘플링 폴백."""
-    import FinanceDataReader as fdr
-    import pandas as pd
+    """분봉 데이터. Naver → 일봉 다운샘플링 폴백."""
     from app.services import naver_finance
     from app.services.intraday import _resample_daily_to_bars  # 기존 fallback
-
-    def _fdr_intraday(ticker: str, interval: str) -> list[dict]:
-        df = fdr.DataReader(ticker, pd.Timestamp.now() - pd.Timedelta("1d"), interval=interval)
-        if df.empty:
-            return []
-        df = df.rename(columns=str.lower)
-        return [
-            {
-                "datetime": str(idx),
-                "open": float(r.get("open", 0) or 0),
-                "high": float(r.get("high", 0) or 0),
-                "low": float(r.get("low", 0) or 0),
-                "close": float(r.get("close", 0) or 0),
-                "volume": int(r.get("volume", 0) or 0),
-                "source": SRC_FDR,
-            }
-            for idx, r in df.iterrows()
-        ][-100:]
 
     def _naver_intraday(ticker: str, interval: str) -> list[dict]:
         bars = naver_finance.get_intraday(ticker, interval)
@@ -169,7 +149,6 @@ def get_intraday(ticker: str, interval: str = "5m") -> list[dict]:
         return [{**b, "source": "fallback_daily"} for b in bars]
 
     sources = [
-        (SRC_FDR, _fdr_intraday),
         (SRC_NAVER, _naver_intraday),
         ("fallback_daily", _fallback_intraday),
     ]

@@ -1640,6 +1640,18 @@ where
     with_account_book(DEFAULT_ACCOUNT, f)
 }
 
+/// 계정 삭제 — default 계정은 삭제 불가. 반환: 삭제 성공 여부.
+pub fn remove_account(account: &str) -> bool {
+    if account == DEFAULT_ACCOUNT {
+        return false;
+    }
+    let mut guard = BOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_mut() {
+        return map.remove(account).is_some();
+    }
+    false
+}
+
 /// 등록된 계정 목록(정렬).
 pub fn list_accounts() -> Vec<String> {
     let guard = BOOKS.lock().unwrap_or_else(|e| e.into_inner());

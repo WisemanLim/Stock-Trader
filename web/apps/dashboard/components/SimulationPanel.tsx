@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { getAccount, DEFAULT_ACCOUNT } from '@/lib/account';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 
@@ -12,6 +13,17 @@ export default function SimulationPanel({ ticker, price }: { ticker: string; pri
   const [result, setResult] = useState<ExecResult>(null);
   const [err, setErr] = useState('');
   const [cash, setCash] = useState<number | null>(null);
+  const [account, setAccountState] = useState(DEFAULT_ACCOUNT);
+
+  // 계좌 초기화 + storage 이벤트로 실시간 동기화
+  useEffect(() => {
+    setAccountState(getAccount());
+    function onStorage(e: StorageEvent) {
+      if (e.key === 'st_account') setAccountState(e.newValue || DEFAULT_ACCOUNT);
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // 종목 변경 시 수량·결과 초기화
   useEffect(() => {
@@ -20,13 +32,14 @@ export default function SimulationPanel({ ticker, price }: { ticker: string; pri
     setErr('');
   }, [ticker]);
 
-  // 예수금 잔액 조회
+  // 예수금 잔액 조회 — 선택 계좌 기준
   useEffect(() => {
-    fetch(`${BFF}/api/portfolio`, { signal: AbortSignal.timeout(3000) })
+    const acc = getAccount();
+    fetch(`${BFF}/api/portfolio?account=${encodeURIComponent(acc)}`, { signal: AbortSignal.timeout(3000) })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => { if (typeof data?.cash === 'number') setCash(data.cash); })
       .catch(() => {});
-  }, []);
+  }, [account]);
 
   const qty = parseInt(qtyStr) || 0;
   const total = qty * (price ?? 0);
@@ -58,9 +71,10 @@ export default function SimulationPanel({ ticker, price }: { ticker: string; pri
       return;
     }
 
+    const acc = getAccount();
     setLoading(true); setErr(''); setResult(null);
     try {
-      const r = await fetch(`${BFF}/api/paper/execute`, {
+      const r = await fetch(`${BFF}/api/paper/execute?account=${encodeURIComponent(acc)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker, side, quantity: qty, price: price ?? 0 }),
@@ -78,9 +92,9 @@ export default function SimulationPanel({ ticker, price }: { ticker: string; pri
           alert('예수금이 부족합니다.');
         }
       }
-      // 체결 성공 시 잔액 갱신
+      // 체결 성공 시 선택 계좌 잔액 갱신
       if (data?.accepted) {
-        fetch(`${BFF}/api/portfolio`, { signal: AbortSignal.timeout(3000) })
+        fetch(`${BFF}/api/portfolio?account=${encodeURIComponent(acc)}`, { signal: AbortSignal.timeout(3000) })
           .then((r) => r.ok ? r.json() : null)
           .then((d) => { if (typeof d?.cash === 'number') setCash(d.cash); })
           .catch(() => {});
@@ -123,6 +137,11 @@ export default function SimulationPanel({ ticker, price }: { ticker: string; pri
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontSize: 9, color: 'var(--color-muted)', flex: 1 }}>
           {cash !== null ? `예수금 ${cash.toLocaleString('ko-KR')}원` : ''}
+          {account !== DEFAULT_ACCOUNT && (
+            <span style={{ marginLeft: 4, padding: '1px 5px', borderRadius: 3, backgroundColor: 'rgba(88,166,255,0.15)', color: 'var(--color-accent)', fontWeight: 600 }}>
+              {account}
+            </span>
+          )}
         </span>
         <button
           onClick={() => execute('buy')}

@@ -1,7 +1,9 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { searchStocks } from '@/lib/stocks';
+import { Tooltip } from '@/components/Tooltip';
+import { TOOLTIPS } from '@/lib/tooltips';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 
@@ -46,7 +48,7 @@ let _ruleCache: BacktestResult | null = null;
 let _ruleCacheKey = '';
 
 // ─── 공통 컴포넌트 ────────────────────────────────────────────────────────────
-function MetricCard({ label, value, color }: { label: string; value: string; color?: string }) {
+function MetricCard({ label, value, color }: { label: ReactNode; value: string; color?: string }) {
   return (
     <div style={{ padding: '12px 16px', backgroundColor: 'var(--color-bg)', borderRadius: 6, border: '1px solid var(--color-border)', minWidth: 110 }}>
       <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}>{label}</div>
@@ -67,15 +69,19 @@ function MetricsPanel({ result, stockName }: { result: BacktestResult; stockName
         </span>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-        <MetricCard label="총 수익률" value={`${(m.total_return * 100).toFixed(2)}%`}
+        <MetricCard label={<Tooltip title="총 수익률" content={TOOLTIPS.backtest.totalReturn}>총 수익률</Tooltip>}
+          value={`${(m.total_return * 100).toFixed(2)}%`}
           color={m.total_return >= 0 ? 'var(--color-up)' : 'var(--color-down)'} />
         {m.sharpe !== undefined && (
-          <MetricCard label="샤프 지수" value={m.sharpe.toFixed(3)}
+          <MetricCard label={<Tooltip title="샤프 지수" content={TOOLTIPS.backtest.sharpe}>샤프 지수</Tooltip>}
+            value={m.sharpe.toFixed(3)}
             color={m.sharpe >= 1 ? 'var(--color-up)' : m.sharpe >= 0 ? '#f0a500' : 'var(--color-down)'} />
         )}
-        <MetricCard label="최대 낙폭" value={`${(m.max_drawdown * 100).toFixed(2)}%`}
+        <MetricCard label={<Tooltip title="최대 낙폭 (MDD)" content={TOOLTIPS.backtest.mdd}>최대 낙폭</Tooltip>}
+          value={`${(m.max_drawdown * 100).toFixed(2)}%`}
           color="var(--color-down)" />
-        <MetricCard label="승률" value={`${(m.win_rate * 100).toFixed(1)}%`}
+        <MetricCard label={<Tooltip title="승률" content={TOOLTIPS.backtest.winRate}>승률</Tooltip>}
+          value={`${(m.win_rate * 100).toFixed(1)}%`}
           color={m.win_rate >= 0.5 ? 'var(--color-up)' : 'var(--color-muted)'} />
         <MetricCard label="총 거래수" value={String(m.total_trades)} />
       </div>
@@ -152,7 +158,7 @@ function RuleBasedTab({ ticker, stockName }: { ticker: string; stockName: string
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          전략
+          <Tooltip title="전략" content={TOOLTIPS.backtest.smaCross}>전략</Tooltip>
           <select value={strategy} onChange={e => setStrategy(e.target.value)} style={SEL}>
             {RULE_STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
@@ -218,7 +224,7 @@ function RLTab({ ticker, stockName }: { ticker: string; stockName: string }) {
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          알고리즘
+          <Tooltip title="알고리즘" content={TOOLTIPS.backtest.dqn}>알고리즘</Tooltip>
           <select value={algo} onChange={e => setAlgo(e.target.value)} style={SEL}>
             {RL_ALGOS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
           </select>

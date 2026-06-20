@@ -63,6 +63,29 @@ def _signal(rsi: float | None) -> str:
     return "HOLD"
 
 
+def _stock_listing(market: str) -> pd.DataFrame:
+    """KRX 다운 시 KOSPI+KOSDAQ 합산으로 폴백."""
+    try:
+        df = fdr.StockListing(market)
+        # KRX 점검 페이지를 HTML 문자열로 반환하면 빈 DataFrame 처리
+        if df is None or df.empty:
+            raise ValueError("empty listing")
+        return df
+    except Exception:
+        pass
+    # 폴백: 시장별 조회 시도
+    for fallback in ("KOSPI", "KOSDAQ"):
+        if fallback == market:
+            continue
+        try:
+            df = fdr.StockListing(fallback)
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+
 def screen(
     market: str = "KRX",
     rsi_min: float | None = None,
@@ -75,10 +98,7 @@ def screen(
     max_short_ratio: float | None = None,
     min_esg_score: float | None = None,
 ) -> dict:
-    try:
-        listing = fdr.StockListing(market)
-    except Exception as exc:
-        raise ValueError(f"Cannot list {market}: {exc}") from exc
+    listing = _stock_listing(market)
 
     if listing.empty:
         return {"market": market, "total_scanned": 0, "matched": 0, "results": []}

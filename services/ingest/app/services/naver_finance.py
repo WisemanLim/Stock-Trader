@@ -38,6 +38,8 @@ def _parse_sise_response(raw: str) -> tuple[list[str], list[list]]:
     # 응답이 괄호로 감싸진 경우 제거
     if text.startswith("(") and text.endswith(")"):
         text = text[1:-1]
+    if not text:  # 빈 응답 "()" — 장외시간 또는 데이터 없음
+        return [], []
     rows = json.loads(text)
     if not rows or not isinstance(rows, list):
         return [], []

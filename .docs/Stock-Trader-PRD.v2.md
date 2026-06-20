@@ -430,6 +430,73 @@
 
 ---
 
+### F8. 펀더멘털 기반 기업평가 리스크 모니터 (신규)
+
+> 이미지 출처 개념: 코스피·코스닥·HTS·MTS·PER·PBR·ROE·EPS·매출액·영업이익·당기순이익·부채비율·배당수익률·이동평균선·거래량·RSI
+
+#### F8.1 주식 기본 용어 정의
+
+| 용어 | 풀네임 | 공식/의미 | 리스크 활용 |
+|------|--------|-----------|-------------|
+| **KOSPI** | Korea Composite Stock Price Index | 유가증권시장(대형주) 종합지수 | 시장 컨텍스트 — 지수 급락 시 포지션 경고 |
+| **KOSDAQ** | Korea Securities Dealers Automated Quotation | 코스닥 성장주 지수 | 변동성 높음 — 리스크 파라미터 강화 |
+| **PER** | Price-to-Earnings Ratio | 주가 ÷ EPS | **per_max** 초과 → BlockBuy (고평가 진입 차단) |
+| **PBR** | Price-to-Book Ratio | 주가 ÷ BPS (주당순자산) | **pbr_max** 초과 → BlockBuy |
+| **ROE** | Return on Equity | 당기순이익 ÷ 자기자본 × 100 (%) | **roe_min** 미달 → ReducePosition (수익성 저조) |
+| **EPS** | Earnings Per Share | 당기순이익 ÷ 발행주식수 | EPS 음수 → 적자기업 진입 경고 |
+| **매출액** | Revenue / Sales | 회사 총 판매 수익 | 매출 역성장 → 펀더멘털 악화 신호 |
+| **영업이익** | Operating Profit | 매출 − 원가 − 판관비 | 본업 수익성 지표, 음수 → 영업 적자 |
+| **당기순이익** | Net Income | 세후 최종 이익 | EPS 계산 기반, 지속적 적자 → 위험 |
+| **부채비율** | Debt-to-Equity Ratio | 부채 ÷ 자기자본 × 100 (%) | **debt_ratio_max** 초과 → BlockBuy (고레버리지) |
+| **배당수익률** | Dividend Yield | 연간배당 ÷ 주가 × 100 (%) | 스크리너 필터 — 배당주 선별 |
+| **이동평균선** | Moving Average (MA) | 기간 평균 종가 (5·20·60·120일) | 데드크로스(단기 < 장기) → BlockBuy |
+| **거래량** | Volume | 기간 내 총 거래 주식 수 | 거래량 급감 → BlockBuy (유동성 위험) |
+| **RSI** | Relative Strength Index | 14일 상승폭/하락폭 비율 (0~100) | **rsi_overbought** 초과(기본 75) → ReducePosition |
+
+> HTS(Home Trading System)/MTS(Mobile Trading System): 트레이딩 플랫폼 분류 — 구현 대상 아님.
+
+#### F8.2 펀더멘털 데이터 파이프라인
+
+```
+[Naver Finance 모바일 API]
+  summary → PER·PBR·EPS·BPS·배당수익률
+  finance/annual → 매출액·영업이익·당기순이익·ROE·부채비율
+        ↓
+[analysis :8001  GET /fundamental/{ticker}]
+        ↓
+[BFF :3002  GET /api/fundamental/{ticker}]  ← 추가 예정
+        ↓
+[Dashboard: 종목 상세 패널 펀더멘털 위젯]
+```
+
+#### F8.3 리스크 엔진 펀더멘털 규칙 (risk.rs F8 필드)
+
+| 규칙 ID | 파라미터 | 조건 | Action |
+|---------|---------|------|--------|
+| `per_overvalued` | `per`, `per_max` | per_max > 0 && per > per_max | BlockBuy |
+| `pbr_overvalued` | `pbr`, `pbr_max` | pbr_max > 0 && pbr > pbr_max | BlockBuy |
+| `debt_ratio_excess` | `debt_ratio`, `debt_ratio_max` | debt_ratio_max > 0 && debt_ratio > max | BlockBuy |
+| `roe_weak` | `roe`, `roe_min` | roe_min ≠ 0 && roe < roe_min | ReducePosition |
+| `rsi_overbought` | `rsi`, `rsi_overbought` | rsi_overbought > 0 && rsi > threshold | ReducePosition |
+| `ma_death_cross` | `ma_death_cross: bool` | true | BlockBuy |
+| `volume_collapse` | `volume_collapse: bool` | true | BlockBuy |
+
+우선순위: ForceSell > TakeProfit > BlockBuy(펀더멘털 포함) > ReducePosition(ROE·RSI·공매도) > Hold
+
+#### F8.4 스크리너 펀더멘털 필터 (analysis ScreenerFilter F8 필드)
+
+| 필드 | 설명 | 예시 |
+|------|------|------|
+| `max_per` | PER 상한 | 30 |
+| `max_pbr` | PBR 상한 | 3.0 |
+| `min_roe` | ROE 하한 (%) | 5.0 |
+| `max_debt_ratio` | 부채비율 상한 (%) | 200 |
+| `min_dividend_yield` | 배당수익률 하한 (%) | 2.0 |
+
+구현 상태: `GET /fundamental/{ticker}` ✅ · 스크리너 필터 스키마 ✅ · 스크리너 서비스 통합 ⏳
+
+---
+
 ## 5. 거래 성향별 KRX 데이터 활용 전략 (갱신)
 
 | 페르소나 | KRX OPEN API 활용 | 추가 데이터 소스 | 핵심 신규 기능 |
@@ -756,6 +823,8 @@
 | v2.30 | 2026-06-19 | F5 백테스팅 화면 통합: 규칙기반(SMA교차·RSI임계·MACD·Q-러닝) + 강화학습(DQN/PPO/A2C/QR-DQN) 2탭을 `/backtest` 단일 페이지로 통합. 종목코드 공유 입력창, 규칙기반 마운트 시 자동실행, 거래내역 펼침, 강화학습 수 분 소요 안내. 전략/스크리너 페이지 백테스트 탭 제거 → "↺ 백테스팅 →" 배너로 대체. API 응답 필드 매핑 수정(`total_return_pct/100→total_return`, `num_trades→total_trades`). TS clean. |
 | v2.31 | 2026-06-20 | `make db-reset` PostgreSQL 미삭제 버그 수정: non-local(dev/staging/prod) 분기에서 `docker volume rm stock-trader_pgdata` 가 `echo` 힌트만 출력, 실제 미실행이던 버그 수정 → 실제 볼륨 삭제 실행. auth.db(dashboard-data) + PostgreSQL(pgdata) 동시 초기화. pub-Stock-Trader 동일 수정. |
 | v2.30 | 2026-06-20 | F8.14–F8.15 버그수정 + 환경 구동 수정: ① F8.15 회원가입 예수금 risk-engine 미반영 — `register/route.ts` BFF `POST /api/paper/set-cash` sync 추가(2s timeout, 미기동 시 무시). ② F8.14 예수금 입력 step 유효값 오류 — `min="1"` → `min="1000000"` (`step=1000000` 불일치로 정상값 브라우저 거부). ③ docker-compose.yml `env_file` 기본값 `dev` → `local`(7개 서비스). ④ postgres healthcheck `-d ${POSTGRES_DB}` 추가. ⑤ Makefile `prod-all`·`prod-stop`·`prod-logs`·`prod-status`·`prod-build` 타겟 추가. ⑥ `.env.example`·`.env.prod`·`core/risk-engine/.env.prod` 누락 파일 추가. |
+| v2.35 | 2026-06-20 | F9.5 멀티계좌 계좌 sync 전면 수정: ① `lib/account.ts` 신규 — `getAccount`/`setStoredAccount`(localStorage `st_account`, storage 이벤트 dispatch). ② 포트폴리오 페이지 — 진입 시 localStorage 복원(항상 default 초기화 버그 수정), 탭 전환·생성·삭제 시 `setStoredAccount()`. ③ SimulationPanel — 선택 계좌 기준 예수금 조회/체결(`?account=`), storage 이벤트 구독 실시간 동기화, 비-default 계좌 배지. ④ MyPagePanel CashTab — AbortController 단일 effect(경쟁 상태 제거), 선택 계좌 잔여예수금, 비-default → `/api/paper/set-cash?account=` 직접 호출. ⑤ BFF `POST /api/paper/execute` `?account=` 포워딩 추가. ⑥ TopBar 자동완성 `key={s.ticker}` → `key={\`${s.ticker}-${i}\`}` (중복 ticker React key 충돌 수정). TS clean. |
+| v2.34 | 2026-06-20 | F9.5 포트폴리오 멀티계좌: ① 계좌 탭 바 — 선택계좌 파란색, 나머지 회색, 선택 시 제일 앞 배치. ② `+` 버튼 — 계좌명 prompt → `POST /api/paper/set-cash?account=<name>` (회원가입 초기 예수금 동일 적용, Rust `with_account_book` 자동 생성). ③ `−` 버튼 — confirm 후 `DELETE /api/portfolio/account/<name>` (보유 포지션 포함 삭제, default 계좌 삭제 불가). ④ BFF 신규 라우트: `GET /api/paper/accounts`, `DELETE /api/portfolio/account/:name`, `POST /paper/set-cash?account=` 쿼리 포워딩. ⑤ Rust: `remove_account()` 추가, `DELETE /paper/account/:name` 핸들러. TS clean. |
 | v2.29 | 2026-06-19 | F9.4 전략/스크리너 화면 전면 개선 + 행 클릭 버그 수정: ① 스크리너 탭 — RSI범위(min/max)·최소거래량·종가범위(하한/상한) 필터 추가 노출(백엔드 기존 지원). ② 전략 백테스트 탭(신규) — 규칙기반(SMA교차·RSI임계·MACD·Q-러닝)·강화학습(DQN/PPO/A2C/QR-DQN) 전략 선택·실행·결과 지표(총수익률·샤프·낙폭·승률·거래횟수) 표시. ③ BFF `POST /api/backtest/rl` 신규 라우트(algo=DQN→`/backtest/dqn`, PPO→`/backtest/dpg?mode=ppo`, A2C→`/backtest/dpg?mode=a2c`, QRDQN→`/backtest/qrdqn`). ④ `navigateToTicker` 쿠키+localStorage(st_ticker/st_name) 동기 설정 → TopBar 즉시 반영 버그 수정. `window.location.assign('/')` 하드 네비게이션. TS clean. |
 | v2.28 | 2026-06-18 | F9.3 포트폴리오·전략/스크리너 행 클릭 → 대시보드 이동: 보유종목·스캔결과 행 클릭 시 `st_ticker` 쿠키 설정 후 `/` 이동, 대시보드 매수/매도 즉시 접근. cursor: pointer + tooltip 추가. TS clean. |
 | v2.27 | 2026-06-18 | F8.11 버그수정 — 재시작 영속화 강화: `tokio::spawn` 비동기 저장→동기 호출 변경(SIGINT 전 완료 보장). SIGINT/SIGTERM graceful shutdown 훅 추가(종료 전 최종 스냅샷 저장). 원자적 파일 쓰기(`.tmp`→rename으로 손상 방지). Rust 81/81 PASS. |

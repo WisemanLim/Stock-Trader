@@ -11,10 +11,10 @@ MPM_DIR := .mpm
 # ── 인프라 (postgres+pgvector, redis) ───────────────────────────────────────────
 # ENV 를 compose 로 전달 → env_file 가 .env.$(ENV) 선택. local 도 동일 인프라 사용.
 up:
-	ENV=$(ENV) docker compose up -d
+	set -a; . ./.env.$(ENV); set +a; ENV=$(ENV) docker compose up -d
 # 전체 앱 스택(app 프로파일)까지 컨테이너로 기동
 up-app:
-	ENV=$(ENV) docker compose --profile app up -d
+	set -a; . ./.env.$(ENV); set +a; ENV=$(ENV) docker compose --profile app up -d
 down:
 	ENV=$(ENV) docker compose --profile app down --remove-orphans
 
@@ -101,8 +101,8 @@ local-status:
 #   make prod-status # 컨테이너 상태
 #   make prod-build  # 이미지 빌드
 prod-all:
-	ENV=prod docker compose up -d
-	ENV=prod docker compose --profile app up -d
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose up -d
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose --profile app up -d
 prod-stop:
 	ENV=prod docker compose --profile app down --remove-orphans
 prod-logs:
@@ -110,7 +110,7 @@ prod-logs:
 prod-status:
 	ENV=prod docker compose --profile app ps
 prod-build:
-	ENV=prod docker compose --profile app build
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose --profile app build
 
 # ── 포그라운드 전체 기동 (터미널 점유, 색상 로그) ────────────────────────────────────
 # ※ local-all(백그라운드)과 동시에 실행 금지 — 포트 충돌.
@@ -144,7 +144,7 @@ test: test-py test-rust test-web
 
 # ── 컨테이너 빌드 (dev 이상) ─────────────────────────────────────────────────────
 build:
-	ENV=$(ENV) docker compose --profile app build
+	set -a; . ./.env.$(ENV); set +a; ENV=$(ENV) docker compose --profile app build
 
 # ── 배포 ─────────────────────────────────────────────────────────────────────────
 deploy:

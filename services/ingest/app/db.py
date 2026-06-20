@@ -88,7 +88,7 @@ class ShortSellingDaily(Base):
 
 
 def _make_engine():
-    url = settings.database_url
+    url = settings.database_url_sync
     if url.startswith("sqlite"):
         return create_engine(url, connect_args={"check_same_thread": False})
     return create_engine(url)

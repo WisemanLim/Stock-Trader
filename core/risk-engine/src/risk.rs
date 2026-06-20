@@ -42,6 +42,39 @@ pub struct RiskRequest {
     /// 공매도 비율 임계치. 0 이면 규칙 비활성.
     #[serde(default)]
     pub short_ratio_limit: f64,
+
+    // ── F8 펀더멘털 리스크 규칙 ──
+    /// 현재 PER. per_max > 0 && per > per_max → BlockBuy (고평가).
+    #[serde(default)]
+    pub per: f64,
+    #[serde(default)]
+    pub per_max: f64,
+    /// 현재 PBR. pbr_max > 0 && pbr > pbr_max → BlockBuy.
+    #[serde(default)]
+    pub pbr: f64,
+    #[serde(default)]
+    pub pbr_max: f64,
+    /// 현재 ROE (%). roe_min != 0 && roe < roe_min → ReducePosition (수익성 저조).
+    #[serde(default)]
+    pub roe: f64,
+    #[serde(default)]
+    pub roe_min: f64,
+    /// 현재 부채비율 (%). debt_ratio_max > 0 && debt_ratio > max → BlockBuy.
+    #[serde(default)]
+    pub debt_ratio: f64,
+    #[serde(default)]
+    pub debt_ratio_max: f64,
+    /// 현재 RSI. rsi_overbought > 0 && rsi > rsi_overbought → ReducePosition.
+    #[serde(default)]
+    pub rsi: f64,
+    #[serde(default)]
+    pub rsi_overbought: f64,
+    /// 이동평균 데드크로스 (단기 < 장기). true → BlockBuy.
+    #[serde(default)]
+    pub ma_death_cross: bool,
+    /// 거래량 급감 (평균 대비 임계치 미달). true → BlockBuy (유동성 위험).
+    #[serde(default)]
+    pub volume_collapse: bool,
 }
 
 fn default_true() -> bool {
@@ -163,15 +196,61 @@ pub fn evaluate(req: &RiskRequest) -> RiskDecision {
         ));
     }
 
+    // ── F8 펀더멘털 리스크 규칙 ──
+
+    // 9) PER 고평가 — 수익 대비 주가 배수 초과 시 신규 매수 차단.
+    if req.per_max > 0.0 && req.per > 0.0 && req.per > req.per_max {
+        triggered.push("per_overvalued".into());
+        reasons.push(format!("PER 고평가: {:.1}x > {:.1}x 한도 — 신규 매수 차단", req.per, req.per_max));
+    }
+
+    // 10) PBR 고평가 — 자산 대비 주가 배수 초과 시 신규 매수 차단.
+    if req.pbr_max > 0.0 && req.pbr > 0.0 && req.pbr > req.pbr_max {
+        triggered.push("pbr_overvalued".into());
+        reasons.push(format!("PBR 고평가: {:.2}x > {:.2}x 한도 — 신규 매수 차단", req.pbr, req.pbr_max));
+    }
+
+    // 11) 부채비율 과다 — 재무 레버리지 임계치 초과 시 신규 매수 차단.
+    if req.debt_ratio_max > 0.0 && req.debt_ratio > req.debt_ratio_max {
+        triggered.push("debt_ratio_excess".into());
+        reasons.push(format!("부채비율 과다: {:.1}% > {:.1}% 한도 — 신규 매수 차단", req.debt_ratio, req.debt_ratio_max));
+    }
+
+    // 12) ROE 저조 — 자기자본이익률 기준 미달 시 포지션 축소.
+    if req.roe_min != 0.0 && req.roe < req.roe_min {
+        triggered.push("roe_weak".into());
+        reasons.push(format!("ROE 저조: {:.1}% < {:.1}% 기준 — 포지션 축소", req.roe, req.roe_min));
+    }
+
+    // 13) RSI 과매수 — 기술적 과열 시 포지션 축소.
+    if req.rsi_overbought > 0.0 && req.rsi > req.rsi_overbought {
+        triggered.push("rsi_overbought".into());
+        reasons.push(format!("RSI 과매수: {:.1} > {:.1} — 포지션 축소", req.rsi, req.rsi_overbought));
+    }
+
+    // 14) 이동평균 데드크로스 — 단기선이 장기선 하향 돌파, 하락 추세 신규 매수 차단.
+    if req.ma_death_cross {
+        triggered.push("ma_death_cross".into());
+        reasons.push("이동평균 데드크로스(단기 < 장기) — 하락 추세 신규 매수 차단".into());
+    }
+
+    // 15) 거래량 급감 — 유동성 위험 신규 매수 차단.
+    if req.volume_collapse {
+        triggered.push("volume_collapse".into());
+        reasons.push("거래량 급감 — 유동성 위험 신규 매수 차단".into());
+    }
+
     // ── 우선순위 결정 ──
     let has = |k: &str| triggered.iter().any(|t| t == k);
     let action = if has("stop_loss") || has("trailing_stop") || has("daily_loss_limit") || has("market_alert_danger") {
         Action::ForceSell
     } else if has("take_profit") {
         Action::TakeProfit
-    } else if has("fail_safe") || has("market_alert_warning") {
+    } else if has("fail_safe") || has("market_alert_warning")
+        || has("per_overvalued") || has("pbr_overvalued") || has("debt_ratio_excess")
+        || has("ma_death_cross") || has("volume_collapse") {
         Action::BlockBuy
-    } else if has("position_sizing") || has("short_sell_excess") {
+    } else if has("position_sizing") || has("short_sell_excess") || has("roe_weak") || has("rsi_overbought") {
         Action::ReducePosition
     } else {
         Action::Hold
@@ -212,6 +291,14 @@ mod tests {
             market_alert_level: 0,
             short_ratio: 0.0,
             short_ratio_limit: 0.0,
+            // F8 펀더멘털 — 기본값 비활성
+            per: 0.0, per_max: 0.0,
+            pbr: 0.0, pbr_max: 0.0,
+            roe: 0.0, roe_min: 0.0,
+            debt_ratio: 0.0, debt_ratio_max: 0.0,
+            rsi: 0.0, rsi_overbought: 0.0,
+            ma_death_cross: false,
+            volume_collapse: false,
         }
     }
 
@@ -383,6 +470,131 @@ mod tests {
         r.short_ratio = 0.99;
         r.short_ratio_limit = 0.10;
         let d = evaluate(&r);
-        assert_eq!(d.action, Action::ForceSell); // 위험이 우선
+        assert_eq!(d.action, Action::ForceSell);
+    }
+
+    // F8: 펀더멘털 규칙
+    #[test]
+    fn per_overvalued_blocks_buy() {
+        let mut r = base();
+        r.per = 55.0;
+        r.per_max = 30.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::BlockBuy);
+        assert!(d.triggered.contains(&"per_overvalued".to_string()));
+    }
+
+    #[test]
+    fn per_disabled_when_per_max_zero() {
+        let mut r = base();
+        r.per = 999.0;
+        r.per_max = 0.0; // 비활성
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::Hold);
+    }
+
+    #[test]
+    fn per_disabled_when_per_zero() {
+        let mut r = base();
+        r.per = 0.0; // 데이터 없음
+        r.per_max = 30.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::Hold);
+    }
+
+    #[test]
+    fn pbr_overvalued_blocks_buy() {
+        let mut r = base();
+        r.pbr = 6.0;
+        r.pbr_max = 3.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::BlockBuy);
+        assert!(d.triggered.contains(&"pbr_overvalued".to_string()));
+    }
+
+    #[test]
+    fn debt_ratio_excess_blocks_buy() {
+        let mut r = base();
+        r.debt_ratio = 350.0;
+        r.debt_ratio_max = 200.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::BlockBuy);
+        assert!(d.triggered.contains(&"debt_ratio_excess".to_string()));
+    }
+
+    #[test]
+    fn debt_ratio_within_limit_no_action() {
+        let mut r = base();
+        r.debt_ratio = 150.0;
+        r.debt_ratio_max = 200.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::Hold);
+    }
+
+    #[test]
+    fn roe_weak_reduces_position() {
+        let mut r = base();
+        r.roe = -5.0; // 적자
+        r.roe_min = 5.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::ReducePosition);
+        assert!(d.triggered.contains(&"roe_weak".to_string()));
+    }
+
+    #[test]
+    fn roe_min_zero_disabled() {
+        let mut r = base();
+        r.roe = -99.0;
+        r.roe_min = 0.0; // 비활성
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::Hold);
+    }
+
+    #[test]
+    fn rsi_overbought_reduces_position() {
+        let mut r = base();
+        r.rsi = 82.0;
+        r.rsi_overbought = 75.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::ReducePosition);
+        assert!(d.triggered.contains(&"rsi_overbought".to_string()));
+    }
+
+    #[test]
+    fn rsi_overbought_disabled_when_zero() {
+        let mut r = base();
+        r.rsi = 99.0;
+        r.rsi_overbought = 0.0;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::Hold);
+    }
+
+    #[test]
+    fn ma_death_cross_blocks_buy() {
+        let mut r = base();
+        r.ma_death_cross = true;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::BlockBuy);
+        assert!(d.triggered.contains(&"ma_death_cross".to_string()));
+    }
+
+    #[test]
+    fn volume_collapse_blocks_buy() {
+        let mut r = base();
+        r.volume_collapse = true;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::BlockBuy);
+        assert!(d.triggered.contains(&"volume_collapse".to_string()));
+    }
+
+    #[test]
+    fn stop_loss_overrides_fundamental() {
+        let mut r = base();
+        r.current_price = 68000.0; // stop-loss 발동
+        r.per = 100.0;
+        r.per_max = 30.0;
+        r.ma_death_cross = true;
+        let d = evaluate(&r);
+        assert_eq!(d.action, Action::ForceSell); // 손절이 우선
     }
 }

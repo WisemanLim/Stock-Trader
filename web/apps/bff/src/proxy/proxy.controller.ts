@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query } from '@nestjs/common';
 import { ProxyService } from './proxy.service';
 import { safeTicker } from '../ticker.util';
 import { SERVICES, ServiceKey } from '../config';
@@ -37,6 +37,12 @@ export class ProxyController {
   @Get('indicators/:ticker')
   indicators(@Param('ticker') ticker: string) {
     return this.proxy.fetchJson('analysis', `/indicators/${safeTicker(ticker)}`);
+  }
+
+  // F2.4 펀더멘털 기업평가 — PER/PBR/EPS/ROE/매출액/영업이익/당기순이익/부채비율/배당수익률
+  @Get('fundamental/:ticker')
+  fundamental(@Param('ticker') ticker: string) {
+    return this.proxy.fetchJson('analysis', `/fundamental/${safeTicker(ticker)}`);
   }
 
   // F6.2 캔들(OHLCV) — ingest 프록시. days 쿼리(기본 30).
@@ -136,16 +142,36 @@ export class ProxyController {
     return this.proxy.enrichPortfolio(account);
   }
 
-  // F7: 시뮬레이션 매수/매도 체결 (POST /paper/execute).
-  @Post('paper/execute')
-  paperExecute(@Body() body: Record<string, unknown>) {
-    return this.proxy.postJson('risk', '/paper/execute', body);
+  // F2.4 / F4: 펀더멘털 + 리스크 종합 평가
+  @Post('risk/check')
+  riskCheck(@Body() body: Record<string, unknown>) {
+    return this.proxy.postJson('risk', '/risk/check', body);
   }
 
-  // F8: 예수금 직접 설정 (POST /paper/set-cash) — MyPage 예수금 변경 시 sync.
+  // F7: 시뮬레이션 매수/매도 체결 (POST /paper/execute). ?account= 멀티계좌 지원.
+  @Post('paper/execute')
+  paperExecute(@Body() body: Record<string, unknown>, @Query('account') account?: string) {
+    const path = account ? `/paper/execute?account=${encodeURIComponent(account)}` : '/paper/execute';
+    return this.proxy.postJson('risk', path, body);
+  }
+
+  // F8: 예수금 직접 설정 (POST /paper/set-cash) — MyPage 예수금 변경 시 sync. ?account= 지원.
   @Post('paper/set-cash')
-  paperSetCash(@Body() body: Record<string, unknown>) {
-    return this.proxy.postJson('risk', '/paper/set-cash', body);
+  paperSetCash(@Body() body: Record<string, unknown>, @Query('account') account?: string) {
+    const path = account ? `/paper/set-cash?account=${encodeURIComponent(account)}` : '/paper/set-cash';
+    return this.proxy.postJson('risk', path, body);
+  }
+
+  // F9.5 멀티계좌: 계정 목록 조회.
+  @Get('paper/accounts')
+  paperAccounts() {
+    return this.proxy.fetchJson('risk', '/paper/accounts');
+  }
+
+  // F9.5 멀티계좌: 계정 삭제 (default 계정 불가).
+  @Delete('portfolio/account/:name')
+  async portfolioDeleteAccount(@Param('name') name: string) {
+    return this.proxy.deleteJson('risk', `/paper/account/${encodeURIComponent(name)}`);
   }
 
   // D-2: IR 보고서 RAG 조회.

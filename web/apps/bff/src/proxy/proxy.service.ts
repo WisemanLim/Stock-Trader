@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, HttpException } from '@nestjs/common';
 import { serviceUrl, ServiceKey } from '../config';
 import { safeTicker } from '../ticker.util';
 
@@ -9,7 +9,11 @@ export class ProxyService {
     const url = serviceUrl(key, path);
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) {
-      throw new Error(`${key} ${path} → ${res.status}`);
+      const body = await res.text().catch(() => '');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let detail: string | Record<string, any>;
+      try { detail = JSON.parse(body); } catch { detail = body || `${key} upstream error`; }
+      throw new HttpException(detail, res.status);
     }
     return res.json();
   }
@@ -133,7 +137,24 @@ export class ProxyService {
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
-      throw new Error(`${key} ${path} → ${res.status}`);
+      const text = await res.text().catch(() => '');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let detail: string | Record<string, any>;
+      try { detail = JSON.parse(text); } catch { detail = text || `${key} upstream error`; }
+      throw new HttpException(detail, res.status);
+    }
+    return res.json();
+  }
+
+  async deleteJson(key: ServiceKey, path: string): Promise<unknown> {
+    const url = serviceUrl(key, path);
+    const res = await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(5000) });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let detail: string | Record<string, any>;
+      try { detail = JSON.parse(text); } catch { detail = text || `${key} upstream error`; }
+      throw new HttpException(detail, res.status);
     }
     return res.json();
   }

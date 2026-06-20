@@ -83,6 +83,16 @@ pub async fn init(dsn: &str) -> Option<PgPool> {
         )
     "#;
     sqlx::query(ddl_eq).execute(&pool).await.ok()?;
+    // 사용자 설정(initial_cash 등) 영속화 테이블.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS paper_settings (
+            key   text PRIMARY KEY,
+            value text NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .ok()?;
     Some(pool)
 }
 
@@ -140,6 +150,30 @@ pub async fn insert_equity(pool: &PgPool, p: &EquityPoint) -> Result<(), sqlx::E
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// 설정 키-값 저장 (initial_cash 등). UPSERT.
+pub async fn save_setting(pool: &PgPool, key: &str, value: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO paper_settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 설정 값 로드. 없으면 None.
+pub async fn load_setting(pool: &PgPool, key: &str) -> Option<String> {
+    let row = sqlx::query("SELECT value FROM paper_settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()?;
+    row.try_get::<String, _>("value").ok()
 }
 
 /// 손익곡선 전체 로딩(시간순) — 시작 시 하이드레이션용.

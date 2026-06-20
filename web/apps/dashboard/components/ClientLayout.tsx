@@ -24,8 +24,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       router.replace('/login');
     } else {
       setChecked(true);
-      if (!sessionStorage.getItem('st_cash_synced')) {
-        sessionStorage.setItem('st_cash_synced', '1');
+      const lastSync = Number(sessionStorage.getItem('st_cash_synced_ts') ?? 0);
+      if (Date.now() - lastSync > 60_000) {
+        sessionStorage.setItem('st_cash_synced_ts', String(Date.now()));
         fetch('/api/auth/sync', {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },

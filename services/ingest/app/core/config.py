@@ -7,7 +7,8 @@ class Settings(BaseSettings):
 
     app_name: str = "stock-trader-ingest"
     env: str = "local"
-    database_url: str = "sqlite:///./local.db"
+    database_url: str = "sqlite:///./local.db"      # async (unused by sync engine)
+    database_url_sync: str = "sqlite:///./local.db"  # psycopg2 sync driver
     redis_url: str = ""
     broker_ws_url: str = ""
     broker_protocol: str = "generic"  # generic | kis

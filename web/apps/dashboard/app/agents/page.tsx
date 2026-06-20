@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { searchStocks } from '@/lib/stocks';
+import { Tooltip } from '@/components/Tooltip';
+import { TOOLTIPS } from '@/lib/tooltips';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 
@@ -95,7 +97,7 @@ export default function AgentsPage() {
           </div>
         )}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          페르소나
+          <Tooltip title="페르소나" content={TOOLTIPS.agent.persona}>페르소나</Tooltip>
           <select value={persona} onChange={e => setPersona(e.target.value)} style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }}>
             {PERSONAS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
@@ -114,15 +116,15 @@ export default function AgentsPage() {
           {/* Decision */}
           <div style={{ padding: 20, backgroundColor: 'var(--color-card)', borderRadius: 8, border: `1px solid ${signalColor(result.decision.signal)}33`, display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}>최종 시그널</div>
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}><Tooltip title="최종 시그널" content={TOOLTIPS.agent.decision}>최종 시그널</Tooltip></div>
               <div style={{ fontSize: 28, fontWeight: 800, color: signalColor(result.decision.signal), backgroundColor: signalBg(result.decision.signal), padding: '4px 16px', borderRadius: 6 }}>{result.decision.signal}</div>
             </div>
             <div>
-              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}>신뢰도</div>
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}><Tooltip title="신뢰도" content={TOOLTIPS.agent.confidence}>신뢰도</Tooltip></div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>{(result.decision.confidence * 100).toFixed(0)}%</div>
             </div>
             <div>
-              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}>포지션 비중</div>
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}><Tooltip title="포지션 비중" content={TOOLTIPS.agent.weight}>포지션 비중</Tooltip></div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>{(result.decision.weight * 100).toFixed(0)}%</div>
             </div>
             <div style={{ flex: 1, minWidth: 200 }}>

@@ -1,5 +1,7 @@
 'use client';
 import { useEffect, useRef, useState, useMemo } from 'react';
+import { getToken } from '@/lib/auth-client';
+import { getAccount, setStoredAccount, DEFAULT_ACCOUNT } from '@/lib/account';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 
@@ -118,8 +120,9 @@ function navigateToTicker(ticker: string, name = '') {
 }
 
 export default function PortfolioPage() {
-  const [account, setAccount] = useState('default');
-  const [inputAccount, setInputAccount] = useState('default');
+  const [account, setAccount] = useState(DEFAULT_ACCOUNT);
+  const [accounts, setAccounts] = useState<string[]>(['default']);
+  const [userInitialCash, setUserInitialCash] = useState<number>(100_000_000);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -141,6 +144,32 @@ export default function PortfolioPage() {
   }
 
   useEffect(() => { setTimeout(updateArrows, 150); }, [chartData]);
+
+  async function fetchAccounts() {
+    try {
+      const r = await fetch(`${BFF}/api/paper/accounts`, { signal: AbortSignal.timeout(3000) });
+      if (r.ok) {
+        const data = await r.json();
+        const list: string[] = Array.isArray(data?.accounts) ? data.accounts : ['default'];
+        setAccounts(list.length > 0 ? list : ['default']);
+      }
+    } catch { /* keep current list */ }
+  }
+
+  async function fetchUserInitialCash() {
+    try {
+      const token = getToken();
+      if (!token) return;
+      const r = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (r.ok) {
+        const u = await r.json();
+        if (typeof u?.initial_cash === 'number') setUserInitialCash(u.initial_cash);
+      }
+    } catch { /* use default */ }
+  }
 
   async function fetchCharts(tickers: string[]) {
     const results: Record<string, OhlcvBar[]> = {};
@@ -180,13 +209,73 @@ export default function PortfolioPage() {
     }
   }
 
-  useEffect(() => { load(account); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const saved = getAccount();
+    setAccount(saved);
+    fetchAccounts();
+    fetchUserInitialCash();
+    load(saved);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleSearch() {
-    const a = inputAccount.trim() || 'default';
-    setAccount(a);
-    load(a);
+  function selectAccount(acc: string) {
+    setAccount(acc);
+    setStoredAccount(acc);
+    load(acc);
   }
+
+  async function handleAddAccount() {
+    const name = window.prompt('새 계좌명을 입력하세요 (영문·숫자·하이픈만 권장):');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === 'default') {
+      alert('유효하지 않은 계좌명입니다.');
+      return;
+    }
+    try {
+      // POST set-cash for the new account creates it with user's initial cash
+      const r = await fetch(`${BFF}/api/paper/set-cash?account=${encodeURIComponent(trimmed)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cash: userInitialCash }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await fetchAccounts();
+      setAccount(trimmed);
+      setStoredAccount(trimmed);
+      load(trimmed);
+    } catch (e) {
+      alert(`계좌 생성 실패: ${e}`);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    if (account === 'default') {
+      alert('Default 계좌는 삭제할 수 없습니다.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `"${account}" 계좌를 삭제하시겠습니까?\n이 계좌의 모든 보유 종목도 함께 삭제됩니다.`
+    );
+    if (!confirmed) return;
+    try {
+      const r = await fetch(`${BFF}/api/portfolio/account/${encodeURIComponent(account)}`, {
+        method: 'DELETE',
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await fetchAccounts();
+      setAccount(DEFAULT_ACCOUNT);
+      setStoredAccount(DEFAULT_ACCOUNT);
+      load(DEFAULT_ACCOUNT);
+    } catch (e) {
+      alert(`계좌 삭제 실패: ${e}`);
+    }
+  }
+
+  // Ordered: selected first, then others alphabetically
+  const orderedAccounts = useMemo(() => {
+    const others = accounts.filter(a => a !== account).sort((a, b) => a.localeCompare(b));
+    return [account, ...others.filter(a => accounts.includes(a))];
+  }, [accounts, account]);
 
   const [sortKey, setSortKey] = useState<PortSortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -240,16 +329,37 @@ export default function PortfolioPage() {
         </span>
       </div>
 
-      {/* Account selector */}
-      <div style={{ display: 'flex', gap: 8, padding: 14, backgroundColor: 'var(--color-card)', borderRadius: 8, border: '1px solid var(--color-border)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-          계좌
-          <input value={inputAccount} onChange={e => setInputAccount(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} placeholder="default" style={{ width: 120, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }} />
-        </label>
-        <button onClick={handleSearch} disabled={loading} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', backgroundColor: 'var(--color-accent)', color: '#fff', fontWeight: 600, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1 }}>
-          {loading ? '로딩…' : '조회'}
-        </button>
-        {account && <span style={{ fontSize: 11, color: 'var(--color-muted)', alignSelf: 'center' }}>계좌: {account}</span>}
+      {/* Multi-account tab bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', backgroundColor: 'var(--color-card)', borderRadius: 8, border: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
+        {orderedAccounts.map(acc => (
+          <button
+            key={acc}
+            onClick={() => selectAccount(acc)}
+            style={{
+              padding: '5px 14px', borderRadius: 6, border: 'none', fontWeight: 600, fontSize: 13,
+              cursor: 'pointer', transition: 'background 0.15s',
+              backgroundColor: acc === account ? 'var(--color-accent)' : 'rgba(110,118,129,0.18)',
+              color: acc === account ? '#fff' : 'var(--color-muted)',
+            }}
+          >
+            {acc === 'default' ? 'Default' : acc}
+          </button>
+        ))}
+        {/* + button */}
+        <button
+          onClick={handleAddAccount}
+          title="새 계좌 추가"
+          style={{ padding: '5px 12px', borderRadius: 6, border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer', backgroundColor: 'rgba(63,185,80,0.18)', color: 'var(--color-up)' }}
+        >+</button>
+        {/* - button — hidden for default account */}
+        {account !== 'default' && (
+          <button
+            onClick={handleDeleteAccount}
+            title="현재 계좌 삭제"
+            style={{ padding: '5px 12px', borderRadius: 6, border: 'none', fontWeight: 700, fontSize: 15, cursor: 'pointer', backgroundColor: 'rgba(248,81,73,0.18)', color: 'var(--color-down)' }}
+          >−</button>
+        )}
+        {loading && <span style={{ fontSize: 11, color: 'var(--color-muted)', marginLeft: 4 }}>로딩…</span>}
       </div>
 
       {err && (
@@ -301,6 +411,7 @@ export default function PortfolioPage() {
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--color-border)', fontWeight: 600, fontSize: 13 }}>
           보유 포지션
           {positions.length > 0 && <span style={{ fontSize: 11, color: 'var(--color-muted)', fontWeight: 400, marginLeft: 6 }}>{positions.length}종목</span>}
+          <span style={{ fontSize: 11, color: 'var(--color-muted)', fontWeight: 400, marginLeft: 8 }}>{account === 'default' ? 'Default' : account} 계좌</span>
         </div>
         {positions.length === 0 ? (
           <div style={{ padding: '20px 16px', fontSize: 12, color: 'var(--color-muted)' }}>
@@ -361,25 +472,19 @@ export default function PortfolioPage() {
                 <tfoot>
                   <tr style={{ borderTop: '2px solid var(--color-border)', backgroundColor: 'rgba(88,166,255,0.05)' }}>
                     <td colSpan={4} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--color-muted)' }}>합계</td>
-                    {/* 매수총금액 합계 */}
                     <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: 'var(--color-text)' }}>
                       {totalBuyAmount > 0 ? totalBuyAmount.toLocaleString('ko-KR') : '-'}
                     </td>
-                    {/* 현재가 (빈 칸) */}
                     <td />
-                    {/* 매도총금액 합계 */}
                     <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: 'var(--color-text)' }}>
                       {totalSellAmount > 0 ? totalSellAmount.toLocaleString('ko-KR') : '-'}
                     </td>
-                    {/* 평가손익 합계 */}
                     <td style={{ padding: '6px 12px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: totalPnl > 0 ? 'var(--color-up)' : totalPnl < 0 ? 'var(--color-down)' : 'var(--color-muted)' }}>
                       {totalPnl > 0 ? '+' : ''}{totalPnl.toLocaleString('ko-KR')}
                     </td>
-                    {/* 수익률 */}
                     <td style={{ padding: '6px 12px', textAlign: 'right', fontWeight: 700, color: totalPnlPct == null ? 'var(--color-muted)' : totalPnlPct > 0 ? 'var(--color-up)' : totalPnlPct < 0 ? 'var(--color-down)' : 'var(--color-muted)' }}>
                       {totalPnlPct != null ? `${totalPnlPct > 0 ? '+' : ''}${(totalPnlPct * 100).toFixed(2)}%` : '-'}
                     </td>
-                    {/* 비중 */}
                     <td style={{ padding: '6px 12px', textAlign: 'right', color: 'var(--color-muted)', fontWeight: 700 }}>100%</td>
                   </tr>
                 </tfoot>

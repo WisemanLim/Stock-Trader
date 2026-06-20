@@ -354,7 +354,7 @@ export default function TopBar() {
               {/* 자동완성 모드 (입력 중) */}
               {input.trim() && suggestions.map((s, i) => (
                 <div
-                  key={s.ticker}
+                  key={`${s.ticker}-${i}`}
                   onMouseDown={() => handleSelect(s)}
                   style={{
                     display: 'flex',

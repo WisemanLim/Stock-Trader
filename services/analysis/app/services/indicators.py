@@ -41,6 +41,10 @@ def compute_indicators(ticker: str, days: int = 60) -> dict:
     ema20_val = None
     sma50_val = None
     atr_val = None
+    ma5_val = None
+    ma20_val = None
+    ma_death_cross = False
+    volume_collapse = False
 
     if len(df) >= 14:
         rsi_ind = ta.momentum.RSIIndicator(close=close, window=14)
@@ -85,9 +89,27 @@ def compute_indicators(ticker: str, days: int = 60) -> dict:
         atr = ta.volatility.AverageTrueRange(high=high, low=low, close=close, window=14).average_true_range().iloc[-1]
         atr_val = round(float(atr), 2) if not pd.isna(atr) else None
 
+    # 이동평균선 MA5, MA20 + 데드크로스
+    if len(df) >= 5:
+        ma5 = ta.trend.SMAIndicator(close=close, window=5).sma_indicator().iloc[-1]
+        ma5_val = round(float(ma5), 2) if not pd.isna(ma5) else None
+    if len(df) >= 20:
+        ma20 = ta.trend.SMAIndicator(close=close, window=20).sma_indicator().iloc[-1]
+        ma20_val = round(float(ma20), 2) if not pd.isna(ma20) else None
+    if ma5_val is not None and ma20_val is not None:
+        ma_death_cross = ma5_val < ma20_val
+
+    # 거래량 급감: 당일 거래량이 20일 평균의 30% 미만
+    vol_col = next((c for c in ["volume", "Volume"] if c in df.columns), None)
+    if vol_col and len(df) >= 20:
+        vol = df[vol_col].astype(float).replace(0, float("nan"))
+        avg_vol = vol.iloc[-20:].mean()
+        today_vol = vol.iloc[-1]
+        if avg_vol > 0 and not pd.isna(today_vol):
+            volume_collapse = today_vol < avg_vol * 0.3
+
     # C-1: VWAP(20) — 20일 롤링 VWAP (일별 전형가 × 거래량 / 거래량합계)
     vwap_val: float | None = None
-    vol_col = next((c for c in ["volume", "Volume"] if c in df.columns), None)
     if vol_col and len(df) >= 5:
         vol = df[vol_col].astype(float).replace(0, float("nan"))
         typical = (high + low + close) / 3
@@ -121,4 +143,8 @@ def compute_indicators(ticker: str, days: int = 60) -> dict:
         "vwap_20": vwap_val,
         "close_pct": close_pct_val,
         "signal": _signal(rsi_val, hist),
+        "ma_5": ma5_val,
+        "ma_20": ma20_val,
+        "ma_death_cross": ma_death_cross,
+        "volume_collapse": volume_collapse,
     }
