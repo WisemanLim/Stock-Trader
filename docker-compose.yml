@@ -49,11 +49,11 @@ services:
     build: { context: services/agents }
     env_file: [".env.${ENV:-local}"]
     environment:
-      ANALYSIS_URL: "http://analysis:${ANALYSIS_PORT:-8001}"
-      RAG_URL: "http://rag:${RAG_PORT:-8002}"
-      INGEST_URL: "http://ingest:${INGEST_PORT:-8003}"
-      RISK_ENGINE_URL: "http://risk-engine:${RISK_ENGINE_PORT:-3001}"
-      BFF_URL: "http://bff:${BFF_PORT:-3002}"
+      ANALYSIS_URL: "${ANALYSIS_URL:-http://analysis:8001}"
+      RAG_URL: "${RAG_URL:-http://rag:8002}"
+      INGEST_URL: "${INGEST_URL:-http://ingest:8003}"
+      RISK_ENGINE_URL: "${RISK_ENGINE_URL:-http://risk-engine:3001}"
+      BFF_URL: "${BFF_URL:-http://bff:3002}"
     ports: ["${AGENTS_PORT:-8004}:8004"]
     depends_on: [postgres, redis, analysis, rag, ingest]
 
@@ -85,7 +85,7 @@ services:
       dockerfile: apps/bff/Dockerfile
     env_file: [".env.${ENV:-local}"]
     environment:
-      RISK_ENGINE_URL: "http://risk-engine:${RISK_ENGINE_PORT:-3001}"
+      RISK_ENGINE_URL: "${RISK_ENGINE_URL:-http://risk-engine:3001}"
     ports: ["${BFF_PORT:-3002}:3002"]
     depends_on:
       postgres: { condition: service_healthy }
@@ -99,9 +99,9 @@ services:
       dockerfile: apps/dashboard/Dockerfile
     env_file: [".env.${ENV:-local}"]
     environment:
-      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}  # env_file의 리터럴 ${...} 덮어쓰기; 쉘 export 값 주입
-      NEXT_PUBLIC_BFF_URL: "http://localhost:${BFF_PORT:-3002}"
-      NEXT_PUBLIC_RISK_ENGINE_URL: "http://localhost:${RISK_ENGINE_PORT:-3001}"
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      NEXT_PUBLIC_BFF_URL: "${NEXT_PUBLIC_BFF_URL:-http://localhost:3002}"
+      NEXT_PUBLIC_RISK_ENGINE_URL: "${NEXT_PUBLIC_RISK_ENGINE_URL:-http://localhost:3001}"
     volumes:
       - dashboard-data:/app/apps/dashboard/data
     ports: ["${DASHBOARD_PORT:-3000}:3000"]
