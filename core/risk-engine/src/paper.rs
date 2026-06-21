@@ -1665,6 +1665,24 @@ pub fn list_accounts() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 전체 계좌 스냅샷 생성 — 멀티계좌 영속화용.
+pub fn snapshot_all_books() -> HashMap<String, PaperBookSnapshot> {
+    let guard = BOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.to_snapshot())).collect())
+        .unwrap_or_default()
+}
+
+/// 전체 계좌 스냅샷 복원 — 멀티계좌 영속화용.
+pub fn restore_all_books(snaps: HashMap<String, PaperBookSnapshot>) {
+    let mut guard = BOOKS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    for (account, snap) in snaps {
+        let book = map.entry(account).or_insert_with(PaperBook::new);
+        book.restore_from_snapshot(snap);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

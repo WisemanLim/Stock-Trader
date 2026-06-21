@@ -2,16 +2,27 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import CandleChart from './CandleChart';
-import type { Candle, CandleResponse } from '@/lib/candles';
+import {
+  candleLayout,
+  applyLivePrice,
+  priceRange,
+  scaleY,
+  type Candle,
+  type CandleResponse,
+} from '@/lib/candles';
+import { formatPrice } from '@/lib/format';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
-// QUAD_H × 2 = 660px (original single chart height)
-const QUAD_H = 330;
+const QUAD_H = 300;
+const DAILY_H = 440;
 const YAXIS_W = 58;
 const XAXIS_H = 22;
 const TITLE_H = 26;
 const MODAL_CHART_H = 540;
+const POLL_MS = 5_000;
+const MIN_VISIBLE = 10;
+const ZOOM_STEP = 5;
+const Y_PADDING_RATIO = 0.06;
 
 interface IntradayBar {
   datetime: string;
@@ -23,8 +34,15 @@ interface IntradayBar {
 }
 
 type QuadKey = 'q1' | 'q2' | 'q3' | 'q4';
+type DaysOption = 90 | 180 | 270 | 365;
 
-// ── 공통 SVG 유틸 ──────────────────────────────────────────────
+interface PatternSignal {
+  type: 'BUY' | 'SELL';
+  label: string;
+  candleIndex: number;
+}
+
+// ── SVG utils ──────────────────────────────────────────────────
 function sy(v: number, min: number, max: number, h: number): number {
   if (max === min) return h / 2;
   return h - ((v - min) / (max - min)) * h;
@@ -45,7 +63,186 @@ function niceYTicks(min: number, max: number, n = 4): number[] {
   return ticks;
 }
 
-// ── 확대 버튼 ──────────────────────────────────────────────────
+// ── Pattern detection ──────────────────────────────────────────
+function linRegSlope(values: number[]): number {
+  const n = values.length;
+  if (n < 2) return 0;
+  const meanX = (n - 1) / 2;
+  const meanY = values.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - meanX) * (values[i] - meanY);
+    den += (i - meanX) ** 2;
+  }
+  return den === 0 ? 0 : num / den;
+}
+
+function localMins(arr: number[], hw = 3): number[] {
+  const res: number[] = [];
+  for (let i = hw; i < arr.length - hw; i++) {
+    let ok = true;
+    for (let j = i - hw; j <= i + hw; j++) {
+      if (j !== i && arr[j] <= arr[i]) { ok = false; break; }
+    }
+    if (ok) res.push(i);
+  }
+  return res;
+}
+
+function localMaxs(arr: number[], hw = 3): number[] {
+  const res: number[] = [];
+  for (let i = hw; i < arr.length - hw; i++) {
+    let ok = true;
+    for (let j = i - hw; j <= i + hw; j++) {
+      if (j !== i && arr[j] >= arr[i]) { ok = false; break; }
+    }
+    if (ok) res.push(i);
+  }
+  return res;
+}
+
+function detectPatterns(candles: Candle[]): PatternSignal[] {
+  const signals: PatternSignal[] = [];
+  const n = candles.length;
+  if (n < 20) return signals;
+
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+  const closes = candles.map(c => c.close);
+
+  const lb = Math.min(n, 80);
+  const off = n - lb;
+  const rH = highs.slice(off);
+  const rL = lows.slice(off);
+  const rC = closes.slice(off);
+
+  const lMins = localMins(rL, 3);
+  const lMaxs = localMaxs(rH, 3);
+
+  // Double Bottom (BUY)
+  for (let k = lMins.length - 1; k >= 1; k--) {
+    const i1 = lMins[k - 1], i2 = lMins[k];
+    if (i2 - i1 < 5) continue;
+    const v1 = rL[i1], v2 = rL[i2];
+    if (Math.abs(v1 - v2) / ((v1 + v2) / 2) < 0.04) {
+      signals.push({ type: 'BUY', label: '더블바텀', candleIndex: off + i2 });
+      break;
+    }
+  }
+
+  // Double Top (SELL)
+  for (let k = lMaxs.length - 1; k >= 1; k--) {
+    const i1 = lMaxs[k - 1], i2 = lMaxs[k];
+    if (i2 - i1 < 5) continue;
+    const v1 = rH[i1], v2 = rH[i2];
+    if (Math.abs(v1 - v2) / ((v1 + v2) / 2) < 0.04) {
+      signals.push({ type: 'SELL', label: '더블탑', candleIndex: off + i2 });
+      break;
+    }
+  }
+
+  // Inverse H&S (BUY)
+  if (lMins.length >= 3) {
+    const [ls, h, rs] = lMins.slice(-3);
+    const lsV = rL[ls], hV = rL[h], rsV = rL[rs];
+    const sim = Math.abs(lsV - rsV) / ((lsV + rsV) / 2);
+    if (hV < lsV && hV < rsV && sim < 0.06 && h - ls >= 3 && rs - h >= 3) {
+      signals.push({ type: 'BUY', label: '역헤드앤솔더', candleIndex: off + rs });
+    }
+  }
+
+  // H&S (SELL)
+  if (lMaxs.length >= 3) {
+    const [ls, h, rs] = lMaxs.slice(-3);
+    const lsV = rH[ls], hV = rH[h], rsV = rH[rs];
+    const sim = Math.abs(lsV - rsV) / ((lsV + rsV) / 2);
+    if (hV > lsV && hV > rsV && sim < 0.06 && h - ls >= 3 && rs - h >= 3) {
+      signals.push({ type: 'SELL', label: '헤드앤솔더', candleIndex: off + rs });
+    }
+  }
+
+  // Bull Flag (BUY)
+  if (lb >= 20) {
+    const pS = rC.length - 20, pE = rC.length - 10;
+    const poleMove = (rC[pE] - rC[pS]) / rC[pS];
+    if (poleMove > 0.04) {
+      const flagC = rC.slice(pE);
+      const flagRange = (Math.max(...flagC) - Math.min(...flagC)) / rC[pE];
+      if (linRegSlope(flagC) <= 0 && flagRange < 0.06) {
+        signals.push({ type: 'BUY', label: '상승폴래그', candleIndex: n - 1 });
+      }
+    }
+  }
+
+  // Bear Flag (SELL)
+  if (lb >= 20) {
+    const pS = rC.length - 20, pE = rC.length - 10;
+    const poleMove = (rC[pE] - rC[pS]) / rC[pS];
+    if (poleMove < -0.04) {
+      const flagC = rC.slice(pE);
+      const flagRange = (Math.max(...flagC) - Math.min(...flagC)) / Math.abs(rC[pE]);
+      if (linRegSlope(flagC) >= 0 && flagRange < 0.06) {
+        signals.push({ type: 'SELL', label: '하락폴래그', candleIndex: n - 1 });
+      }
+    }
+  }
+
+  // Ascending Triangle (BUY)
+  {
+    const win = Math.min(25, lb);
+    const wH = rH.slice(-win), wL = rL.slice(-win);
+    const maxH = Math.max(...wH), minH = Math.min(...wH);
+    const highFlat = (maxH - minH) / maxH < 0.025;
+    const lowSlope = linRegSlope(wL);
+    const highSlope = linRegSlope(wH);
+    if (highFlat && lowSlope > 0 && Math.abs(highSlope) < Math.abs(lowSlope) * 0.5) {
+      signals.push({ type: 'BUY', label: '상승삼각형', candleIndex: n - 1 });
+    }
+  }
+
+  // Descending Triangle (SELL)
+  {
+    const win = Math.min(25, lb);
+    const wH = rH.slice(-win), wL = rL.slice(-win);
+    const maxL = Math.max(...wL), minL = Math.min(...wL);
+    const lowFlat = (maxL - minL) / maxL < 0.025;
+    const highSlope = linRegSlope(wH);
+    const lowSlope = linRegSlope(wL);
+    if (lowFlat && highSlope < 0 && Math.abs(lowSlope) < Math.abs(highSlope) * 0.5) {
+      signals.push({ type: 'SELL', label: '하락삼각형', candleIndex: n - 1 });
+    }
+  }
+
+  // Falling Wedge = 쏘사나단 (BUY): both H and L declining, converging
+  {
+    const win = Math.min(20, lb);
+    const hs = linRegSlope(rH.slice(-win));
+    const ls = linRegSlope(rL.slice(-win));
+    if (hs < 0 && ls < 0 && ls > hs && Math.abs(hs - ls) / Math.abs(hs) > 0.2) {
+      signals.push({ type: 'BUY', label: '쏘사나단', candleIndex: n - 1 });
+    }
+  }
+
+  // Rising Wedge = 쏘성 바람 (SELL): both H and L rising, converging
+  {
+    const win = Math.min(20, lb);
+    const hs = linRegSlope(rH.slice(-win));
+    const ls = linRegSlope(rL.slice(-win));
+    if (hs > 0 && ls > 0 && hs < ls && Math.abs(ls - hs) / Math.abs(ls) > 0.2) {
+      signals.push({ type: 'SELL', label: '쏘성바람', candleIndex: n - 1 });
+    }
+  }
+
+  const seen = new Set<string>();
+  return signals.filter(s => {
+    const key = `${s.type}:${s.label}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ── ExpandBtn ──────────────────────────────────────────────────
 function ExpandBtn({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -61,7 +258,7 @@ function ExpandBtn({ onClick }: { onClick: () => void }) {
   );
 }
 
-// ── Q1: 금일(또는 최근 거래일) 5분봉 선형 차트 ───────────────────
+// ── Q1: 금일(또는 최근 거래일) 5분봉 ─────────────────────────────
 function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: string; height?: number; onExpand?: () => void }) {
   const [bars, setBars] = useState<IntradayBar[]>([]);
   const [err, setErr] = useState('');
@@ -85,7 +282,6 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
   }, [ticker]);
 
   const today = new Date().toISOString().slice(0, 10);
-  // 오늘 데이터 없으면 최근 거래일 데이터 표시
   const todayBars = bars.filter(b => b.datetime.startsWith(today));
   const lastDay = bars.length > 0 ? bars[bars.length - 1].datetime.slice(0, 10) : '';
   const sessionBars = todayBars.length > 0 ? todayBars : (lastDay ? bars.filter(b => b.datetime.startsWith(lastDay)) : bars);
@@ -94,7 +290,6 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
 
   const innerH = height - XAXIS_H - TITLE_H;
   const chartW = w - YAXIS_W;
-
   const closes = display.map(b => b.close).filter(v => v > 0);
   const minV = closes.length > 0 ? Math.min(...closes) * 0.9995 : 0;
   const maxV = closes.length > 0 ? Math.max(...closes) * 1.0005 : 1;
@@ -110,29 +305,12 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
   if (display.length > 1) {
     const step = Math.max(1, Math.floor(display.length / 6));
     for (let i = 0; i < display.length; i += step) {
-      xLabels.push({
-        x: (i / Math.max(display.length - 1, 1)) * chartW,
-        label: display[i].datetime.split(' ')[1]?.slice(0, 5) ?? '',
-      });
+      xLabels.push({ x: (i / Math.max(display.length - 1, 1)) * chartW, label: display[i].datetime.split(' ')[1]?.slice(0, 5) ?? '' });
     }
   }
 
   const isToday = lastDay === today || todayBars.length > 0;
   const dateLabel = display.length > 0 ? display[0].datetime.slice(0, 10) : '';
-
-  function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
-    e.preventDefault();
-    setVisCount(prev => Math.max(10, Math.min(totalBars.length || 200, prev + (e.deltaY > 0 ? 10 : -10))));
-  }
-
-  function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const svgX = (e.clientX - rect.left) * (w / rect.width);
-    if (svgX >= chartW || display.length < 2) { setTooltip(null); return; }
-    const idx = Math.round((svgX / chartW) * (display.length - 1));
-    const b = display[Math.max(0, Math.min(display.length - 1, idx))];
-    if (b) setTooltip({ x: e.clientX, y: e.clientY, price: b.close, time: b.datetime.split(' ')[1]?.slice(0, 5) ?? '' });
-  }
 
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
@@ -147,8 +325,16 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
         <div style={{ height: height - TITLE_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-muted)', fontSize: 12 }}>데이터 없음</div>
       ) : (
         <svg width={w} height={height - TITLE_H} style={{ display: 'block', cursor: 'crosshair', userSelect: 'none' }}
-          onWheel={handleWheel} onMouseMove={handleMouseMove} onMouseLeave={() => setTooltip(null)}>
-          {/* Y gridlines + labels */}
+          onWheel={e => { e.preventDefault(); setVisCount(prev => Math.max(10, Math.min(totalBars.length || 200, prev + (e.deltaY > 0 ? 10 : -10)))); }}
+          onMouseMove={e => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const svgX = (e.clientX - rect.left) * (w / rect.width);
+            if (svgX >= chartW || display.length < 2) { setTooltip(null); return; }
+            const idx = Math.round((svgX / chartW) * (display.length - 1));
+            const b = display[Math.max(0, Math.min(display.length - 1, idx))];
+            if (b) setTooltip({ x: e.clientX, y: e.clientY, price: b.close, time: b.datetime.split(' ')[1]?.slice(0, 5) ?? '' });
+          }}
+          onMouseLeave={() => setTooltip(null)}>
           {yTicks.map(tick => {
             const y = sy(tick, minV, maxV, innerH);
             return (
@@ -158,17 +344,13 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
               </g>
             );
           })}
-          {/* Axes */}
           <line x1={chartW} x2={chartW} y1={0} y2={innerH} stroke="var(--color-border)" strokeWidth={1} />
           <line x1={0} x2={chartW} y1={innerH} y2={innerH} stroke="var(--color-border)" strokeWidth={1} />
-          {/* Price line */}
           {display.length > 1 && <polyline points={pts} fill="none" stroke="var(--color-accent)" strokeWidth={1.5} />}
-          {/* Last dot */}
           {display.length > 0 && (() => {
             const y = sy(display[display.length - 1].close, minV, maxV, innerH);
             return <circle cx={chartW} cy={y} r={3} fill="var(--color-accent)" />;
           })()}
-          {/* X labels */}
           {xLabels.map(({ x, label }, i) => (
             <text key={i} x={x} y={innerH + XAXIS_H - 4} fontSize={9} fill="var(--color-muted)" textAnchor="middle">{label}</text>
           ))}
@@ -206,7 +388,6 @@ function HourlyPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: str
       .catch(e => setErr(String(e)));
   }, [ticker]);
 
-  // 날짜별 그룹 → 시간대별 수익률(일 개장 대비 누적)
   const hourReturns: Record<number, number[]> = {};
   const dayGroups: Record<string, IntradayBar[]> = {};
   for (const b of bars) (dayGroups[b.datetime.slice(0, 10)] ??= []).push(b);
@@ -237,61 +418,42 @@ function HourlyPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: str
   const maxAbsRaw = Math.max(...avgs.map(Math.abs), 0.05);
   const maxAbs = maxAbsRaw / yZoom;
   const barW = Math.max(8, chartW / HOURS.length * 0.62);
-
   function yScale(v: number) { return innerH / 2 - (Math.max(-maxAbs, Math.min(maxAbs, v)) / maxAbs) * (innerH / 2 - 6); }
-
-  function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
-    e.preventDefault();
-    setYZoom(prev => Math.max(0.2, Math.min(8, prev + (e.deltaY > 0 ? -0.2 : 0.2))));
-  }
-
   const noData = avgs.every(v => Math.abs(v) < 0.001);
 
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       <div style={{ fontSize: 11, color: 'var(--color-muted)', padding: '4px 8px 0', fontWeight: 600, height: TITLE_H, display: 'flex', alignItems: 'center', gap: 6 }}>
-        시간대별 평균 수익률
-        <span style={{ fontSize: 9, opacity: 0.5 }}>스크롤 Y줌</span>
+        시간대별 평균 수익률 <span style={{ fontSize: 9, opacity: 0.5 }}>스크롤 Y줌</span>
       </div>
       {onExpand && <ExpandBtn onClick={onExpand} />}
       {err && <div style={{ fontSize: 10, color: 'var(--color-down)', padding: '2px 8px' }}>⚠ {err}</div>}
-      <svg width={w} height={height - TITLE_H} style={{ display: 'block', cursor: 'ns-resize', userSelect: 'none' }} onWheel={handleWheel}>
-        {/* Grid lines */}
+      <svg width={w} height={height - TITLE_H} style={{ display: 'block', cursor: 'ns-resize', userSelect: 'none' }}
+        onWheel={e => { e.preventDefault(); setYZoom(prev => Math.max(0.2, Math.min(8, prev + (e.deltaY > 0 ? -0.2 : 0.2)))); }}>
         {[0.25, 0.5, 0.75].map(f => {
           const y = f * innerH;
           return <line key={f} x1={0} x2={chartW} y1={y} y2={y} stroke="var(--color-border)" strokeWidth={1} strokeDasharray={f === 0.5 ? undefined : '3,4'} />;
         })}
-        {/* Y axis + labels */}
         <line x1={chartW} x2={chartW} y1={0} y2={innerH} stroke="var(--color-border)" strokeWidth={1} />
         <text x={chartW + 3} y={8} fontSize={9} fill="var(--color-muted)">+{maxAbs.toFixed(2)}%</text>
         <text x={chartW + 3} y={innerH / 2 + 4} fontSize={9} fill="var(--color-muted)">0%</text>
         <text x={chartW + 3} y={innerH} fontSize={9} fill="var(--color-muted)">-{maxAbs.toFixed(2)}%</text>
-        {/* X axis */}
         <line x1={0} x2={chartW} y1={innerH} y2={innerH} stroke="var(--color-border)" strokeWidth={1} />
-        {/* Bars */}
         {HOURS.map((h, i) => {
           const x = (i + 0.5) / HOURS.length * chartW;
           const v = avgs[i];
-          const y0 = innerH / 2;
-          const y1 = yScale(v);
-          const bTop = Math.min(y0, y1);
-          const bH = Math.abs(y0 - y1);
+          const y0 = innerH / 2, y1 = yScale(v);
+          const bTop = Math.min(y0, y1), bH = Math.abs(y0 - y1);
           const color = v >= 0 ? 'var(--color-up)' : 'var(--color-down)';
           return (
             <g key={h}>
               <rect x={x - barW / 2} y={bTop} width={barW} height={Math.max(bH, 1)} fill={color} opacity={0.85} />
               <text x={x} y={innerH + XAXIS_H - 4} fontSize={9} fill="var(--color-muted)" textAnchor="middle">{h}시</text>
-              {bH > 14 && (
-                <text x={x} y={v >= 0 ? bTop - 2 : bTop + bH + 10} fontSize={8} fill={color} textAnchor="middle">
-                  {v >= 0 ? '+' : ''}{v.toFixed(2)}%
-                </text>
-              )}
+              {bH > 14 && <text x={x} y={v >= 0 ? bTop - 2 : bTop + bH + 10} fontSize={8} fill={color} textAnchor="middle">{v >= 0 ? '+' : ''}{v.toFixed(2)}%</text>}
             </g>
           );
         })}
-        {noData && (
-          <text x={chartW / 2} y={innerH / 2 + 4} fontSize={11} fill="var(--color-muted)" textAnchor="middle">데이터 집계 중…</text>
-        )}
+        {noData && <text x={chartW / 2} y={innerH / 2 + 4} fontSize={11} fill="var(--color-muted)" textAnchor="middle">데이터 집계 중…</text>}
       </svg>
     </div>
   );
@@ -338,13 +500,7 @@ function WeekdayPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: st
   const maxAbsRaw = Math.max(...avgs.map(Math.abs), 0.05);
   const maxAbs = maxAbsRaw / yZoom;
   const barW = Math.max(16, chartW / TRADING_DAYS.length * 0.55);
-
   function yScale(v: number) { return innerH / 2 - (Math.max(-maxAbs, Math.min(maxAbs, v)) / maxAbs) * (innerH / 2 - 6); }
-
-  function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
-    e.preventDefault();
-    setYZoom(prev => Math.max(0.2, Math.min(8, prev + (e.deltaY > 0 ? -0.2 : 0.2))));
-  }
 
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
@@ -354,7 +510,8 @@ function WeekdayPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: st
       </div>
       {onExpand && <ExpandBtn onClick={onExpand} />}
       {err && <div style={{ fontSize: 10, color: 'var(--color-down)', padding: '2px 8px' }}>⚠ {err}</div>}
-      <svg width={w} height={height - TITLE_H} style={{ display: 'block', cursor: 'ns-resize', userSelect: 'none' }} onWheel={handleWheel}>
+      <svg width={w} height={height - TITLE_H} style={{ display: 'block', cursor: 'ns-resize', userSelect: 'none' }}
+        onWheel={e => { e.preventDefault(); setYZoom(prev => Math.max(0.2, Math.min(8, prev + (e.deltaY > 0 ? -0.2 : 0.2)))); }}>
         {[0.25, 0.5, 0.75].map(f => {
           const y = f * innerH;
           return <line key={f} x1={0} x2={chartW} y1={y} y2={y} stroke="var(--color-border)" strokeWidth={1} strokeDasharray={f === 0.5 ? undefined : '3,4'} />;
@@ -367,28 +524,201 @@ function WeekdayPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: st
         {TRADING_DAYS.map((d, i) => {
           const x = (i + 0.5) / TRADING_DAYS.length * chartW;
           const v = avgs[i];
-          const y0 = innerH / 2;
-          const y1 = yScale(v);
-          const bTop = Math.min(y0, y1);
-          const bH = Math.abs(y0 - y1);
+          const y0 = innerH / 2, y1 = yScale(v);
+          const bTop = Math.min(y0, y1), bH = Math.abs(y0 - y1);
           const color = v >= 0 ? 'var(--color-up)' : 'var(--color-down)';
-          const cnt = dowMap[d]?.length ?? 0;
           return (
             <g key={d}>
               <rect x={x - barW / 2} y={bTop} width={barW} height={Math.max(bH, 1)} fill={color} opacity={0.85} />
               <text x={x} y={innerH + XAXIS_H - 4} fontSize={10} fill="var(--color-muted)" textAnchor="middle">{KR_DAYS[d]}</text>
-              {bH > 14 && (
-                <text x={x} y={v >= 0 ? bTop - 2 : bTop + bH + 10} fontSize={8} fill={color} textAnchor="middle">
-                  {v >= 0 ? '+' : ''}{v.toFixed(2)}%
-                </text>
-              )}
-              {cnt > 0 && bH < 10 && (
-                <text x={x} y={innerH - 4} fontSize={8} fill="var(--color-muted)" textAnchor="middle" opacity={0.4}>{cnt}일</text>
-              )}
+              {bH > 14 && <text x={x} y={v >= 0 ? bTop - 2 : bTop + bH + 10} fontSize={8} fill={color} textAnchor="middle">{v >= 0 ? '+' : ''}{v.toFixed(2)}%</text>}
             </g>
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+// ── Q4: 일봉 캔들차트 (패턴 감지 포함) ───────────────────────────
+function DailyCandleChart({ ticker, height = DAILY_H, onExpand }: { ticker: string; height?: number; onExpand?: () => void }) {
+  const [days, setDays] = useState<DaysOption>(90);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(90);
+  const [svgW, setSvgW] = useState(800);
+  const [tooltip, setTooltip] = useState<{ candle: Candle; x: number; y: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const ro = new ResizeObserver(e => setSvgW(Math.floor(e[0].contentRect.width)));
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      try {
+        const res = await fetch(`${BFF}/api/candles/${ticker}?days=${days}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`candles ${res.status}`);
+        const data: CandleResponse = await res.json();
+        if (alive) { setCandles(data.bars ?? []); setVisibleCount(data.bars?.length ?? days); setErr(null); }
+      } catch (e) { if (alive) setErr(String(e)); }
+    }
+    async function pollLive() {
+      try {
+        const res = await fetch(`${BFF}/api/price/${ticker}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const p = await res.json();
+        if (alive && typeof p?.price === 'number') setCandles(prev => applyLivePrice(prev, p.price));
+      } catch { /* ignore */ }
+    }
+    load();
+    timerRef.current = setInterval(pollLive, POLL_MS);
+    return () => { alive = false; if (timerRef.current) clearInterval(timerRef.current); };
+  }, [ticker, days]);
+
+  const visible = candles.slice(Math.max(0, candles.length - visibleCount));
+  const chartW = svgW - YAXIS_W;
+  const innerH = height - XAXIS_H - TITLE_H;
+
+  const { min: rawMin, max: rawMax } = priceRange(visible);
+  const pad = (rawMax - rawMin) * Y_PADDING_RATIO;
+  const pMin = rawMin - pad, pMax = rawMax + pad;
+
+  const rects = visible.length > 0 ? candleLayout(visible, chartW, innerH, 2, pMin, pMax) : [];
+  const yTicks = niceYTicks(pMin, pMax);
+
+  const xLabels: { x: number; label: string }[] = [];
+  if (visible.length > 1) {
+    const slot = chartW / visible.length;
+    const maxL = Math.max(2, Math.floor(chartW / 60));
+    const step = Math.max(1, Math.ceil(visible.length / maxL));
+    for (let k = 0; k < visible.length; k += step) {
+      const parts = visible[k].date.split('-');
+      xLabels.push({ x: k * slot + slot / 2, label: parts.length === 3 ? `${parts[1]}/${parts[2]}` : visible[k].date.slice(-5) });
+    }
+  }
+
+  const signals = detectPatterns(candles);
+  const visOffset = candles.length - visible.length;
+  const slotW = visible.length > 0 ? chartW / visible.length : 0;
+
+  return (
+    <div ref={ref} style={{ width: '100%', position: 'relative' }}>
+      <div style={{ fontSize: 11, color: 'var(--color-muted)', padding: '4px 8px 0', fontWeight: 600, height: TITLE_H, display: 'flex', alignItems: 'center', gap: 6, paddingRight: 28 }}>
+        일봉 캔들차트
+        <span style={{ fontWeight: 400, fontSize: 10 }}>({days}일 · {visible.length}봉)</span>
+        <span style={{ fontSize: 9, opacity: 0.5 }}>스크롤 줌</span>
+        {signals.length > 0 && (
+          <span style={{ display: 'flex', gap: 4, marginLeft: 4 }}>
+            {signals.filter(s => s.type === 'BUY').map(s => (
+              <span key={s.label} style={{ fontSize: 8, color: 'var(--color-up)', background: 'rgba(0,180,0,0.12)', borderRadius: 3, padding: '1px 5px', border: '1px solid var(--color-up)' }}>▲ {s.label}</span>
+            ))}
+            {signals.filter(s => s.type === 'SELL').map(s => (
+              <span key={s.label} style={{ fontSize: 8, color: 'var(--color-down)', background: 'rgba(200,0,0,0.1)', borderRadius: 3, padding: '1px 5px', border: '1px solid var(--color-down)' }}>▼ {s.label}</span>
+            ))}
+          </span>
+        )}
+        <select
+          value={days}
+          onChange={e => setDays(Number(e.target.value) as DaysOption)}
+          onClick={e => e.stopPropagation()}
+          style={{ marginLeft: 'auto', fontSize: 10, background: 'var(--color-card)', color: 'var(--color-text)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '1px 4px', cursor: 'pointer' }}
+        >
+          {([90, 180, 270, 365] as DaysOption[]).map(d => <option key={d} value={d}>{d}일</option>)}
+        </select>
+      </div>
+      {onExpand && <ExpandBtn onClick={onExpand} />}
+      {err && <div style={{ fontSize: 10, color: 'var(--color-down)', padding: '2px 8px' }}>⚠ {err}</div>}
+      {visible.length === 0 ? (
+        <div style={{ height: innerH, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-muted)', fontSize: 12 }}>캔들 로딩 중…</div>
+      ) : (
+        <svg
+          width={svgW}
+          height={height - TITLE_H}
+          style={{ display: 'block', cursor: 'crosshair', userSelect: 'none' }}
+          onWheel={e => { e.preventDefault(); setVisibleCount(prev => Math.max(MIN_VISIBLE, Math.min(candles.length, prev + (e.deltaY > 0 ? ZOOM_STEP : -ZOOM_STEP)))); }}
+          onMouseMove={e => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const svgX = (e.clientX - rect.left) * (svgW / rect.width);
+            if (svgX > chartW || visible.length === 0) { setTooltip(null); return; }
+            const idx = Math.min(visible.length - 1, Math.max(0, Math.floor(svgX / slotW)));
+            setTooltip({ candle: visible[idx], x: e.clientX, y: e.clientY });
+          }}
+          onMouseLeave={() => setTooltip(null)}
+        >
+          {/* Y gridlines */}
+          {yTicks.map(tick => {
+            const y = scaleY(tick, pMin, pMax, innerH);
+            return (
+              <g key={tick}>
+                <line x1={0} x2={chartW} y1={y} y2={y} stroke="var(--color-border)" strokeWidth={1} strokeDasharray="3,4" />
+                <text x={chartW + 3} y={y + 4} fontSize={9} fill="var(--color-muted)">{tick >= 1000 ? tick.toLocaleString('ko-KR') : tick}</text>
+              </g>
+            );
+          })}
+          {/* Axes */}
+          <line x1={chartW} x2={chartW} y1={0} y2={innerH} stroke="var(--color-border)" strokeWidth={1} />
+          <line x1={0} x2={chartW} y1={innerH} y2={innerH} stroke="var(--color-border)" strokeWidth={1} />
+          {/* X labels */}
+          {xLabels.map(({ x, label }, i) => (
+            <text key={i} x={x} y={innerH + XAXIS_H - 4} fontSize={9} fill="var(--color-muted)" textAnchor="middle">{label}</text>
+          ))}
+          {/* Candles */}
+          {rects.map((r, i) => {
+            const fill = r.color === 'up' ? 'var(--color-up)' : 'var(--color-down)';
+            return (
+              <g key={i}>
+                <line x1={r.wickX} x2={r.wickX} y1={r.wickTop} y2={r.wickBottom} stroke={fill} strokeWidth={1} opacity={0.85} />
+                <rect x={r.x} y={r.bodyY} width={r.width} height={Math.max(r.bodyHeight, 1)} fill={fill} opacity={0.9} />
+              </g>
+            );
+          })}
+          {/* Pattern signals */}
+          {signals.map(sig => {
+            const visIdx = sig.candleIndex - visOffset;
+            if (visIdx < 0 || visIdx >= visible.length) return null;
+            const cx = visIdx * slotW + slotW / 2;
+            const candle = visible[visIdx];
+            const isBuy = sig.type === 'BUY';
+            const color = isBuy ? 'var(--color-up)' : 'var(--color-down)';
+            const baseY = isBuy
+              ? scaleY(candle.low, pMin, pMax, innerH) + 8
+              : scaleY(candle.high, pMin, pMax, innerH) - 8;
+            const triPts = isBuy
+              ? `${cx},${baseY} ${cx - 6},${baseY + 10} ${cx + 6},${baseY + 10}`
+              : `${cx},${baseY} ${cx - 6},${baseY - 10} ${cx + 6},${baseY - 10}`;
+            const textY = isBuy ? baseY + 20 : baseY - 13;
+            return (
+              <g key={`${sig.type}:${sig.label}`}>
+                <polygon points={triPts} fill={color} opacity={0.9} />
+                <text x={cx} y={textY} fontSize={8} fill={color} textAnchor="middle" fontWeight="bold">{sig.label}</text>
+              </g>
+            );
+          })}
+          <text x={chartW - 6} y={14} fontSize={9} fill="var(--color-muted)" textAnchor="end" opacity={0.5}>스크롤 줌 · {visible.length}봉</text>
+        </svg>
+      )}
+      {tooltip && (
+        <div style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 14, backgroundColor: 'var(--color-card)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '6px 10px', fontSize: 11, pointerEvents: 'none', zIndex: 9999, boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}>
+          <div style={{ color: 'var(--color-muted)', marginBottom: 4, fontWeight: 600 }}>{tooltip.candle.date}</div>
+          {([['O', tooltip.candle.open], ['H', tooltip.candle.high], ['L', tooltip.candle.low], ['C', tooltip.candle.close]] as [string, number][]).map(([key, val]) => (
+            <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '1px 0' }}>
+              <span style={{ color: 'var(--color-muted)' }}>{key}</span>
+              <span style={{ fontWeight: 700 }}>{formatPrice(val)}</span>
+            </div>
+          ))}
+          {(() => {
+            const ch = tooltip.candle.close - tooltip.candle.open;
+            const pct = tooltip.candle.open !== 0 ? (ch / tooltip.candle.open) * 100 : 0;
+            const up = ch >= 0;
+            return <div style={{ textAlign: 'right', marginTop: 4, fontWeight: 700, color: up ? 'var(--color-up)' : 'var(--color-down)' }}>{up ? '+' : ''}{ch.toFixed(0)} ({up ? '+' : ''}{pct.toFixed(2)}%)</div>;
+          })()}
+        </div>
+      )}
     </div>
   );
 }
@@ -414,7 +744,7 @@ function Modal({ onClose, title, children }: { onClose: () => void; title: strin
   );
 }
 
-// ── CandleChart4: 2×2 그리드 ──────────────────────────────────
+// ── CandleChart4: 3+1 레이아웃 ────────────────────────────────
 export default function CandleChart4({ ticker }: { ticker: string }) {
   const [expanded, setExpanded] = useState<QuadKey | null>(null);
 
@@ -425,29 +755,37 @@ export default function CandleChart4({ ticker }: { ticker: string }) {
     q4: '일봉 캔들 차트',
   };
 
-  const cell = (pos: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties => ({
+  const topCell = (last: boolean): CSSProperties => ({
     overflow: 'hidden',
     backgroundColor: 'var(--color-surface)',
     position: 'relative',
-    borderRight: pos === 'tl' || pos === 'bl' ? '1px solid var(--color-border)' : undefined,
-    borderBottom: pos === 'tl' || pos === 'tr' ? '1px solid var(--color-border)' : undefined,
+    borderRight: last ? undefined : '1px solid var(--color-border)',
+    borderBottom: '1px solid var(--color-border)',
   });
 
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: `${QUAD_H}px ${QUAD_H}px`, border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
-        <div style={cell('tl')}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr 1fr',
+        gridTemplateRows: `${QUAD_H}px ${DAILY_H}px`,
+        border: '1px solid var(--color-border)',
+        borderRadius: 8,
+        overflow: 'hidden',
+      }}>
+        {/* Top row: 3 charts */}
+        <div style={topCell(false)}>
           <IntradayLineChart ticker={ticker} onExpand={() => setExpanded('q1')} />
         </div>
-        <div style={cell('tr')}>
+        <div style={topCell(false)}>
           <HourlyPatternChart ticker={ticker} onExpand={() => setExpanded('q2')} />
         </div>
-        <div style={cell('bl')}>
+        <div style={topCell(true)}>
           <WeekdayPatternChart ticker={ticker} onExpand={() => setExpanded('q3')} />
         </div>
-        <div style={cell('br')}>
-          <ExpandBtn onClick={() => setExpanded('q4')} />
-          <CandleChart ticker={ticker} height={QUAD_H} />
+        {/* Bottom row: daily chart full width */}
+        <div style={{ overflow: 'hidden', backgroundColor: 'var(--color-surface)', position: 'relative', gridColumn: '1 / -1' }}>
+          <DailyCandleChart ticker={ticker} onExpand={() => setExpanded('q4')} />
         </div>
       </div>
 
@@ -456,7 +794,7 @@ export default function CandleChart4({ ticker }: { ticker: string }) {
           {expanded === 'q1' && <IntradayLineChart ticker={ticker} height={MODAL_CHART_H} />}
           {expanded === 'q2' && <HourlyPatternChart ticker={ticker} height={MODAL_CHART_H} />}
           {expanded === 'q3' && <WeekdayPatternChart ticker={ticker} height={MODAL_CHART_H} />}
-          {expanded === 'q4' && <CandleChart ticker={ticker} height={MODAL_CHART_H} />}
+          {expanded === 'q4' && <DailyCandleChart ticker={ticker} height={MODAL_CHART_H} />}
         </Modal>
       )}
     </>

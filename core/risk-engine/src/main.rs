@@ -7,7 +7,7 @@ mod risk;
 
 use axum::extract::State;
 use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
-use paper::{list_accounts, remove_account, with_account_book, with_book, OrderRequest, Prepared, DEFAULT_ACCOUNT};
+use paper::{list_accounts, remove_account, restore_all_books, snapshot_all_books, with_account_book, with_book, OrderRequest, Prepared, DEFAULT_ACCOUNT};
 use risk::{evaluate, RiskRequest};
 use serde_json::json;
 use sqlx::PgPool;
@@ -53,19 +53,17 @@ async fn main() {
             }
             None => {
                 tracing::warn!("DATABASE_URL set but connect failed → in-memory paper book");
-                if let Some(snap) = paper_db::load_snapshot() {
-                    with_book(|b| b.restore_from_snapshot(snap));
-                    tracing::info!("paper book restored from snapshot (db-fallback)");
-                }
+                let snaps = paper_db::load_all_snapshots();
+                restore_all_books(snaps);
+                tracing::info!("paper books restored from snapshot (db-fallback)");
                 None
             }
         }
     } else {
         // postgres 없음 → JSON 스냅샷 파일로 이전 상태 복원.
-        if let Some(snap) = paper_db::load_snapshot() {
-            with_book(|b| b.restore_from_snapshot(snap));
-            tracing::info!("paper book restored from snapshot");
-        }
+        let snaps = paper_db::load_all_snapshots();
+        restore_all_books(snaps);
+        tracing::info!("paper books restored from snapshot");
         None
     };
 
@@ -125,8 +123,8 @@ async fn main() {
             _ = sigterm => tracing::info!("SIGTERM — graceful shutdown"),
         }
         if no_db {
-            let snap = with_book(|b| b.to_snapshot());
-            paper_db::save_snapshot(&snap);
+            let snaps = snapshot_all_books();
+            paper_db::save_all_snapshots(&snaps);
             tracing::info!("final snapshot saved on shutdown");
         }
     };
@@ -244,10 +242,10 @@ async fn paper_execute(
 
     // 3) DB 성공(또는 미설정/명명 계정) → 인메모리 원장 commit.
     let result = with_account_book(&account, |book| book.commit(&fill, &position));
-    // postgres 없을 때 JSON 스냅샷 저장(기본 계정만) — 동기 호출로 SIGINT 전 완료 보장.
-    if persist && state.pool.is_none() {
-        let snap = with_account_book(&account, |book| book.to_snapshot());
-        paper_db::save_snapshot(&snap);
+    // postgres 없을 때 전체 계좌 스냅샷 저장 — 동기 호출로 SIGINT 전 완료 보장.
+    if state.pool.is_none() {
+        let snaps = snapshot_all_books();
+        paper_db::save_all_snapshots(&snaps);
     }
     (StatusCode::OK, Json(json!(result)))
 }
@@ -342,14 +340,14 @@ async fn paper_set_cash(
         book.cash = (initial_cash - cost_basis).max(0.0);
         book.cash
     });
-    if account == DEFAULT_ACCOUNT {
-        if let Some(pool) = &state.pool {
+    if let Some(pool) = &state.pool {
+        if account == DEFAULT_ACCOUNT {
             // postgres 모드: initial_cash 영속화 — 재기동 후 replay 완료 시 cash 복원에 사용.
             let _ = paper_db::save_setting(pool, "initial_cash", &initial_cash.to_string()).await;
-        } else {
-            let snap = with_account_book(&account, |book| book.to_snapshot());
-            paper_db::save_snapshot(&snap);
         }
+    } else {
+        let snaps = snapshot_all_books();
+        paper_db::save_all_snapshots(&snaps);
     }
     Json(json!({ "ok": true, "account": account, "cash": new_cash }))
 }

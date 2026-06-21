@@ -38,6 +38,45 @@ pub fn load_snapshot() -> Option<PaperBookSnapshot> {
         }
     }
 }
+
+const ALL_SNAPSHOT_PATH: &str = "data/paper_books.json";
+
+/// 멀티계좌 전체 스냅샷 저장 — postgres 없는 로컬 개발 환경.
+pub fn save_all_snapshots(accounts: &std::collections::HashMap<String, PaperBookSnapshot>) {
+    if let Err(e) = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all("data")?;
+        let json = serde_json::to_string_pretty(&serde_json::json!({ "_v": 2, "accounts": accounts }))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let tmp = format!("{ALL_SNAPSHOT_PATH}.tmp");
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, ALL_SNAPSHOT_PATH)?;
+        Ok(())
+    })() {
+        tracing::warn!("multi-account snapshot save failed: {e}");
+    }
+}
+
+/// 멀티계좌 전체 스냅샷 로드 — 파일 없거나 파싱 실패 시 단일계좌(v1) 마이그레이션.
+pub fn load_all_snapshots() -> std::collections::HashMap<String, PaperBookSnapshot> {
+    if let Ok(json) = std::fs::read_to_string(ALL_SNAPSHOT_PATH) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) {
+            if let Some(acc) = val.get("accounts") {
+                if let Ok(map) = serde_json::from_value(acc.clone()) {
+                    tracing::info!("multi-account snapshots loaded from {ALL_SNAPSHOT_PATH}");
+                    return map;
+                }
+            }
+        }
+    }
+    // v1 마이그레이션: paper_book.json → default 계정으로 복원.
+    let mut map = std::collections::HashMap::new();
+    if let Some(snap) = load_snapshot() {
+        tracing::info!("migrating single-account snapshot to multi-account format");
+        map.insert("default".to_string(), snap);
+    }
+    map
+}
+
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
