@@ -7,7 +7,12 @@ import { safeTicker } from '../ticker.util';
 export class ProxyService {
   async fetchJson(key: ServiceKey, path: string): Promise<unknown> {
     const url = serviceUrl(key, path);
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    let res: Response;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    } catch (err: unknown) {
+      throw new HttpException(`${key} unreachable: ${err instanceof Error ? err.message : String(err)}`, 503);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -130,12 +135,17 @@ export class ProxyService {
 
   async postJson(key: ServiceKey, path: string, body: unknown): Promise<unknown> {
     const url = serviceUrl(key, path);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8000),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch (err: unknown) {
+      throw new HttpException(`${key} unreachable: ${err instanceof Error ? err.message : String(err)}`, 503);
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -148,7 +158,12 @@ export class ProxyService {
 
   async deleteJson(key: ServiceKey, path: string): Promise<unknown> {
     const url = serviceUrl(key, path);
-    const res = await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(5000) });
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'DELETE', signal: AbortSignal.timeout(5000) });
+    } catch (err: unknown) {
+      throw new HttpException(`${key} unreachable: ${err instanceof Error ? err.message : String(err)}`, 503);
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

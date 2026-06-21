@@ -101,16 +101,16 @@ local-status:
 #   make prod-status # 컨테이너 상태
 #   make prod-build  # 이미지 빌드
 prod-all:
-	set -a; . ./.env.prod; set +a; ENV=prod docker compose up -d
-	set -a; . ./.env.prod; set +a; ENV=prod docker compose --profile app up -d
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose -f docker-compose.yml up -d
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose -f docker-compose.yml --profile app up -d
 prod-stop:
-	ENV=prod docker compose --profile app down --remove-orphans
+	ENV=prod docker compose -f docker-compose.yml --profile app down --remove-orphans
 prod-logs:
-	ENV=prod docker compose --profile app logs -f
+	ENV=prod docker compose -f docker-compose.yml --profile app logs -f
 prod-status:
-	ENV=prod docker compose --profile app ps
+	ENV=prod docker compose -f docker-compose.yml --profile app ps
 prod-build:
-	set -a; . ./.env.prod; set +a; ENV=prod docker compose --profile app build
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose -f docker-compose.yml --profile app build
 
 # ── 포그라운드 전체 기동 (터미널 점유, 색상 로그) ────────────────────────────────────
 # ※ local-all(백그라운드)과 동시에 실행 금지 — 포트 충돌.

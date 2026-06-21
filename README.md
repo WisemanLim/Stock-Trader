@@ -87,12 +87,15 @@ Stock-Trader/
 cp .env.example .env.local   # 루트 + 각 서비스 디렉터리
 ```
 
-| 파일           | 용도                                        |
-| -------------- | ------------------------------------------- |
-| `.env.local`   | 로컬 직접 실행 (SQLite, Redis 선택)         |
-| `.env.dev`     | docker compose 개발 (Postgres + Redis)      |
-| `.env.staging` | prod 동등 구성 검증                         |
-| `.env.prod`    | 키 목록만 — Vault/K8s External Secrets 주입 |
+| 파일           | 용도                                                               |
+| -------------- | ------------------------------------------------------------------ |
+| `.env.local`   | 로컬 직접 실행 — SQLite, Redis 선택, localhost 서비스 URL          |
+| `.env.dev`     | Docker Compose 개발 — Postgres + Redis, 서비스명 URL 하드코딩     |
+| `.env.staging` | Docker Compose prod 동등 구성 검증 — 서비스명 URL 하드코딩        |
+| `.env.prod`    | Docker Compose 프로덕션 — 서비스명 URL 하드코딩, 시크릿 쉘 export |
+| `.env.example` | 커밋용 템플릿 — 실 값 절대 기재 금지                              |
+
+> **⚠️ Docker Compose `env_file` 주의:** `env_file` 은 `${VAR}` 를 **확장하지 않는다**. `.env.dev`/`.env.staging`/`.env.prod` 서비스 내부 URL(`ANALYSIS_URL` 등)은 반드시 하드코딩(`http://analysis:8001` 등). `AUTH_JWT_SECRET` 등 시크릿은 `compose.yml` `environment:` 블록에서 쉘 env 치환으로 주입.
 
 > **⚠️ 실 증권사 API Key·Secret → OS Keychain 또는 Vault. 파일 기재 절대 금지.**
 > 비-프로덕션 데이터는 합성 데이터만 사용 (COMPLIANCE.md).
@@ -109,11 +112,11 @@ openssl rand -base64 32
 | 환경 | 방법 | 비고 |
 |------|------|------|
 | `local` | `.env.local` 에 직접 기재 | 개발용 임시값 허용 |
-| `dev` | `.env.dev` 에 직접 기재 | 개발용 임시값 허용 |
+| `dev` | `.env.dev` 에 주석 해제 후 기재 | 개발용 임시값 허용 |
 | `staging` | 쉘 `export` 후 make 실행 | 파일 기재 금지 |
 | `prod` | 쉘 `export` 후 make 실행 (K8s: Vault 자동 주입) | 파일 기재 절대 금지 |
 
-> **Docker Compose env_file 주의:** `.env.staging` / `.env.prod` 의 `${AUTH_JWT_SECRET}` 는 쉘 변수로 **확장되지 않는다**. compose 실행 전 반드시 쉘에서 `export` 로 설정해야 한다.
+> **`AUTH_JWT_SECRET` 주입 원리:** `compose.yml` `dashboard` 서비스의 `environment: AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}` 블록이 쉘 env에서 치환한다. `env_file`의 `${AUTH_JWT_SECRET}` 참조는 env_file 내 미확장이므로, 반드시 `make` 실행 전 쉘에서 `export` 해야 한다.
 
 ```bash
 # staging / prod — Docker Compose 실행 전 쉘에서 설정
@@ -502,6 +505,7 @@ cd web && pnpm -r test
 | KRX 시스템 점검·FDR 봇차단 시 시세·OHLCV·분봉 수집 중단 | FDR 단일 소스 의존 — KRX 점검 시 데이터 공백 | `multi_source.py` FDR→Naver Finance→Daum Finance 자동 폴백 오케스트레이터. `GET /krx/data-sources` 소스 헬스체크 (iter-72) |
 | 종목 검색 시 hang → BFF 3s 타임아웃 (`지니언스` 등 미포함 종목) | FDR `StockListing` KRX 봇차단 HTML 반환 → `rows=[]` → `_stock_cache_at` 미설정 → 매 요청마다 FDR 재호출 | `krx.py` `_CACHE_FAIL_TTL(5m)` 추가 — 실패 시에도 타임스탬프 설정. `stocks.ts` 지니언스(241840) 추가 (iter-71) |
 | ingest 미기동 시 `/api/candles·/api/intraday·/api/price` 모두 500 | BFF `candles()`·`price/:ticker`·`intraday/:ticker` try/catch 없어 `fetchJson` 예외가 NestJS 500으로 전파 | `proxy.service.ts` 3메서드 try/catch 추가 — 빈 결과(`bars:[]`) 또는 `null` 반환. `page.tsx` ticker 검증 강화(`/^([0-9]{6}|[A-Za-z]{1,5})$/`, 7자리 숫자 등 폴백) (iter-70) |
+| `make prod-all` 후 BFF → `ENOTFOUND analysis` / analysis 미기동 | ① `.env.prod`/`.env.dev`/`.env.staging` 서비스 URL `${ANALYSIS_PORT}` 미확장. ② `docker-compose.override.yml` 자동 병합 — 소스 볼륨 마운트·`uv run --reload` 오버라이드로 컨테이너 내 `.venv` 미존재 → uvicorn 실행 실패 | ① env 파일 서비스 URL 하드코딩. ② Makefile prod 타겟 `-f docker-compose.yml` 명시(override 차단). ③ Python 서비스 Dockerfile `uv sync --frozen --no-dev` + `CMD ["uvicorn", ...]` 직접 실행. ④ BFF 네트워크 오류 → 503 (수정 완료) |
 | `cargo: command not found`                     | PATH 미설정                                    | `export PATH=$HOME/.cargo/bin:$PATH`                             |
 | `Cannot connect to Docker daemon`              | Docker Desktop 미실행                          | `open -a Docker` 후 ~30초 대기                                   |
 | `finance-datareader not found`                 | PyPI 패키지명                                  | `finance-datareader` (하이픈)                                    |
@@ -536,19 +540,32 @@ make prod-all
 
 ### 환경 설정 — `.env.prod`
 
+> ⚠️ **Docker Compose `env_file` 주의**: `env_file` 은 `${VAR}` 를 **확장하지 않는다**. 서비스 내부 URL 은 반드시 하드코딩. 시크릿(`AUTH_JWT_SECRET` 등)은 쉘 `export` 후 `make prod-all` 실행.
+
 ```bash
-# .env.prod — 값 플레이스홀더만 기재, 실값은 Vault/External Secrets가 주입
+# .env.prod — Docker Compose 프로덕션 (make prod-all)
 APP_ENV=prod
-DATABASE_URL=${DATABASE_URL}         # Vault → K8s Secret → 파드 env
-REDIS_URL=${REDIS_URL}
 ENV=prod
-RISK_ENGINE_PORT=3001
-NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
-ANALYSIS_URL=${ANALYSIS_URL}
-RAG_URL=${RAG_URL}
-INGEST_URL=${INGEST_URL}
-# 모든 시크릿: K8s Secret → External Secrets Operator → Vault
+
+# DB — 컨테이너 내부 라우팅
+DATABASE_URL=postgresql+asyncpg://app:app@postgres:5432/stock_trader
+DATABASE_URL_SYNC=postgresql://app:app@postgres:5432/stock_trader
+REDIS_URL=redis://redis:6379/0
+
+# 서비스 내부 URL — env_file은 ${VAR} 미확장 → 하드코딩 필수
+ANALYSIS_URL=http://analysis:8001
+RAG_URL=http://rag:8002
+INGEST_URL=http://ingest:8003
+AGENTS_URL=http://agents:8004
+RISK_ENGINE_URL=http://risk-engine:3001
+BFF_URL=http://bff:3002
+
+# 시크릿 — 쉘에서 export 후 make prod-all (K8s: Vault → External Secrets 자동 주입)
+# export AUTH_JWT_SECRET=$(openssl rand -base64 32)
+AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
 ```
+
+> K8s 배포 시 `DATABASE_URL`, `REDIS_URL`, `AUTH_JWT_SECRET` 등은 Vault → External Secrets Operator → K8s Secret → 파드 env 자동 주입. 서비스 URL 은 K8s Service DNS(`analysis.stock-trader.svc.cluster.local` 등)로 교체.
 
 ### A) Docker Compose 프로덕션 기동
 
