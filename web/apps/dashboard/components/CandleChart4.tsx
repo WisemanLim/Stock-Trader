@@ -11,6 +11,7 @@ import {
   type CandleResponse,
 } from '@/lib/candles';
 import { formatPrice } from '@/lib/format';
+import { getCompareList, COMPARE_EVENT, type CompareEntry } from '@/lib/compare-stocks';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 const QUAD_H = 300;
@@ -259,12 +260,13 @@ function ExpandBtn({ onClick }: { onClick: () => void }) {
 }
 
 // ── Q1: 금일(또는 최근 거래일) 5분봉 ─────────────────────────────
-function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: string; height?: number; onExpand?: () => void }) {
+function IntradayLineChart({ ticker, compareList = [], height = QUAD_H, onExpand }: { ticker: string; compareList?: CompareEntry[]; height?: number; onExpand?: () => void }) {
   const [bars, setBars] = useState<IntradayBar[]>([]);
   const [err, setErr] = useState('');
   const [w, setW] = useState(400);
   const [visCount, setVisCount] = useState(78);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; price: number; time: string } | null>(null);
+  const [compareBars, setCompareBars] = useState<Map<string, IntradayBar[]>>(new Map());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -280,6 +282,23 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
       .then(d => setBars(Array.isArray(d?.bars) ? d.bars : []))
       .catch(e => setErr(String(e)));
   }, [ticker]);
+
+  useEffect(() => {
+    if (compareList.length === 0) { setCompareBars(new Map()); return; }
+    let cancelled = false;
+    Promise.allSettled(compareList.map(e =>
+      fetch(`${BFF}/api/intraday/${e.ticker}?interval=5m`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => [e.ticker, Array.isArray(d?.bars) ? d.bars as IntradayBar[] : []] as const)
+        .catch(() => [e.ticker, [] as IntradayBar[]] as const)
+    )).then(res => {
+      if (cancelled) return;
+      const m = new Map<string, IntradayBar[]>();
+      res.forEach(r => { if (r.status === 'fulfilled') m.set(r.value[0], r.value[1]); });
+      setCompareBars(m);
+    });
+    return () => { cancelled = true; };
+  }, [compareList]);
 
   const today = new Date().toISOString().slice(0, 10);
   const todayBars = bars.filter(b => b.datetime.startsWith(today));
@@ -351,6 +370,26 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
             const y = sy(display[display.length - 1].close, minV, maxV, innerH);
             return <circle cx={chartW} cy={y} r={3} fill="var(--color-accent)" />;
           })()}
+          {compareList.length > 0 && display.length > 0 && (() => {
+            const mainBase = display[0].close;
+            if (mainBase === 0) return null;
+            return compareList.map(e => {
+              const cBars = compareBars.get(e.ticker) ?? [];
+              const cDate = display[0].datetime.slice(0, 10);
+              const cSession = cBars.filter(b => b.datetime.startsWith(cDate));
+              const cDisplay = cSession.length > 0 ? cSession : cBars.slice(-Math.min(visCount, cBars.length));
+              if (cDisplay.length < 2) return null;
+              const cBase = cDisplay[0].close;
+              if (cBase === 0) return null;
+              const cPts = cDisplay.map((b, i) => {
+                const pct = (b.close - cBase) / cBase;
+                const x = (i / Math.max(cDisplay.length - 1, 1)) * chartW;
+                const y = sy(mainBase * (1 + pct), minV, maxV, innerH);
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+              }).join(' ');
+              return <polyline key={e.ticker} points={cPts} fill="none" stroke={e.color} strokeWidth={1.5} strokeOpacity={0.85} />;
+            });
+          })()}
           {xLabels.map(({ x, label }, i) => (
             <text key={i} x={x} y={innerH + XAXIS_H - 4} fontSize={9} fill="var(--color-muted)" textAnchor="middle">{label}</text>
           ))}
@@ -367,11 +406,12 @@ function IntradayLineChart({ ticker, height = QUAD_H, onExpand }: { ticker: stri
 }
 
 // ── Q2: 시간대별 평균 수익률 ────────────────────────────────────
-function HourlyPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: string; height?: number; onExpand?: () => void }) {
+function HourlyPatternChart({ ticker, compareList = [], height = QUAD_H, onExpand }: { ticker: string; compareList?: CompareEntry[]; height?: number; onExpand?: () => void }) {
   const [bars, setBars] = useState<IntradayBar[]>([]);
   const [err, setErr] = useState('');
   const [w, setW] = useState(400);
   const [yZoom, setYZoom] = useState(1);
+  const [compareBarMap, setCompareBarMap] = useState<Map<string, IntradayBar[]>>(new Map());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -387,6 +427,23 @@ function HourlyPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: str
       .then(d => setBars(Array.isArray(d?.bars) ? d.bars : []))
       .catch(e => setErr(String(e)));
   }, [ticker]);
+
+  useEffect(() => {
+    if (compareList.length === 0) { setCompareBarMap(new Map()); return; }
+    let cancelled = false;
+    Promise.allSettled(compareList.map(e =>
+      fetch(`${BFF}/api/intraday/${e.ticker}?interval=5m`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => [e.ticker, Array.isArray(d?.bars) ? d.bars as IntradayBar[] : []] as const)
+        .catch(() => [e.ticker, [] as IntradayBar[]] as const)
+    )).then(res => {
+      if (cancelled) return;
+      const m = new Map<string, IntradayBar[]>();
+      res.forEach(r => { if (r.status === 'fulfilled') m.set(r.value[0], r.value[1]); });
+      setCompareBarMap(m);
+    });
+    return () => { cancelled = true; };
+  }, [compareList]);
 
   const hourReturns: Record<number, number[]> = {};
   const dayGroups: Record<string, IntradayBar[]> = {};
@@ -454,6 +511,34 @@ function HourlyPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: str
           );
         })}
         {noData && <text x={chartW / 2} y={innerH / 2 + 4} fontSize={11} fill="var(--color-muted)" textAnchor="middle">데이터 집계 중…</text>}
+        {compareList.map(e => {
+          const cBars = compareBarMap.get(e.ticker) ?? [];
+          const cHourRet: Record<number, number[]> = {};
+          const cDayGrp: Record<string, IntradayBar[]> = {};
+          for (const b of cBars) (cDayGrp[b.datetime.slice(0, 10)] ??= []).push(b);
+          for (const dBars of Object.values(cDayGrp)) {
+            const sorted = [...dBars].sort((a, b) => a.datetime.localeCompare(b.datetime));
+            const dayOpen = sorted[0]?.open ?? 0;
+            if (dayOpen === 0) continue;
+            const hGrp: Record<number, IntradayBar[]> = {};
+            for (const b of sorted) {
+              const h = parseInt(b.datetime.split(' ')[1]?.split(':')[0] ?? '0');
+              if (h >= 9 && h <= 15) (hGrp[h] ??= []).push(b);
+            }
+            for (const [hStr, hBars] of Object.entries(hGrp)) {
+              const h = parseInt(hStr);
+              (cHourRet[h] ??= []).push((hBars[hBars.length - 1].close - dayOpen) / dayOpen * 100);
+            }
+          }
+          const cAvgs = HOURS.map(h => { const v = cHourRet[h]; return v?.length ? v.reduce((a, b) => a + b, 0) / v.length : null; });
+          const pts = HOURS.map((h, i) => { const v = cAvgs[i]; if (v === null) return null; return `${((i + 0.5) / HOURS.length * chartW).toFixed(1)},${yScale(v).toFixed(1)}`; }).filter(Boolean) as string[];
+          return (
+            <g key={e.ticker}>
+              {pts.length > 1 && <polyline points={pts.join(' ')} fill="none" stroke={e.color} strokeWidth={1.5} strokeDasharray="4,3" />}
+              {HOURS.map((h, i) => { const v = cAvgs[i]; if (v === null) return null; return <circle key={h} cx={(i + 0.5) / HOURS.length * chartW} cy={yScale(v)} r={3.5} fill={e.color} />; })}
+            </g>
+          );
+        })}
       </svg>
     </div>
   );
@@ -463,11 +548,12 @@ function HourlyPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: str
 const KR_DAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const TRADING_DAYS = [1, 2, 3, 4, 5];
 
-function WeekdayPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: string; height?: number; onExpand?: () => void }) {
+function WeekdayPatternChart({ ticker, compareList = [], height = QUAD_H, onExpand }: { ticker: string; compareList?: CompareEntry[]; height?: number; onExpand?: () => void }) {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [err, setErr] = useState('');
   const [w, setW] = useState(400);
   const [yZoom, setYZoom] = useState(1);
+  const [compareCandleMap, setCompareCandleMap] = useState<Map<string, Candle[]>>(new Map());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -483,6 +569,23 @@ function WeekdayPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: st
       .then((d: CandleResponse) => setCandles(d.bars ?? []))
       .catch(e => setErr(String(e)));
   }, [ticker]);
+
+  useEffect(() => {
+    if (compareList.length === 0) { setCompareCandleMap(new Map()); return; }
+    let cancelled = false;
+    Promise.allSettled(compareList.map(e =>
+      fetch(`${BFF}/api/candles/${e.ticker}?days=90`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then((d: CandleResponse | null) => [e.ticker, d?.bars ?? []] as const)
+        .catch(() => [e.ticker, [] as Candle[]] as const)
+    )).then(res => {
+      if (cancelled) return;
+      const m = new Map<string, Candle[]>();
+      res.forEach(r => { if (r.status === 'fulfilled') m.set(r.value[0], r.value[1]); });
+      setCompareCandleMap(m);
+    });
+    return () => { cancelled = true; };
+  }, [compareList]);
 
   const dowMap: Record<number, number[]> = {};
   for (const c of candles) {
@@ -535,19 +638,37 @@ function WeekdayPatternChart({ ticker, height = QUAD_H, onExpand }: { ticker: st
             </g>
           );
         })}
+        {compareList.map(e => {
+          const cCandles = compareCandleMap.get(e.ticker) ?? [];
+          const cDowMap: Record<number, number[]> = {};
+          for (const c of cCandles) {
+            if (!c.date || c.open === 0) continue;
+            const dow = new Date(c.date).getDay();
+            (cDowMap[dow] ??= []).push((c.close - c.open) / c.open * 100);
+          }
+          const cAvgs = TRADING_DAYS.map(d => { const v = cDowMap[d]; return v?.length ? v.reduce((a, b) => a + b, 0) / v.length : null; });
+          const pts = TRADING_DAYS.map((d, i) => { const v = cAvgs[i]; if (v === null) return null; return `${((i + 0.5) / TRADING_DAYS.length * chartW).toFixed(1)},${yScale(v).toFixed(1)}`; }).filter(Boolean) as string[];
+          return (
+            <g key={e.ticker}>
+              {pts.length > 1 && <polyline points={pts.join(' ')} fill="none" stroke={e.color} strokeWidth={1.5} strokeDasharray="4,3" />}
+              {TRADING_DAYS.map((d, i) => { const v = cAvgs[i]; if (v === null) return null; return <circle key={d} cx={(i + 0.5) / TRADING_DAYS.length * chartW} cy={yScale(v)} r={3.5} fill={e.color} />; })}
+            </g>
+          );
+        })}
       </svg>
     </div>
   );
 }
 
 // ── Q4: 일봉 캔들차트 (패턴 감지 포함) ───────────────────────────
-function DailyCandleChart({ ticker, height = DAILY_H, onExpand }: { ticker: string; height?: number; onExpand?: () => void }) {
+function DailyCandleChart({ ticker, compareList = [], height = DAILY_H, onExpand }: { ticker: string; compareList?: CompareEntry[]; height?: number; onExpand?: () => void }) {
   const [days, setDays] = useState<DaysOption>(90);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(90);
   const [svgW, setSvgW] = useState(800);
   const [tooltip, setTooltip] = useState<{ candle: Candle; x: number; y: number } | null>(null);
+  const [compareCandles, setCompareCandles] = useState<Map<string, Candle[]>>(new Map());
   const ref = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -579,6 +700,23 @@ function DailyCandleChart({ ticker, height = DAILY_H, onExpand }: { ticker: stri
     timerRef.current = setInterval(pollLive, POLL_MS);
     return () => { alive = false; if (timerRef.current) clearInterval(timerRef.current); };
   }, [ticker, days]);
+
+  useEffect(() => {
+    if (compareList.length === 0) { setCompareCandles(new Map()); return; }
+    let cancelled = false;
+    Promise.allSettled(compareList.map(e =>
+      fetch(`${BFF}/api/candles/${e.ticker}?days=${days}`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then((d: CandleResponse | null) => [e.ticker, d?.bars ?? []] as const)
+        .catch(() => [e.ticker, [] as Candle[]] as const)
+    )).then(res => {
+      if (cancelled) return;
+      const m = new Map<string, Candle[]>();
+      res.forEach(r => { if (r.status === 'fulfilled') m.set(r.value[0], r.value[1]); });
+      setCompareCandles(m);
+    });
+    return () => { cancelled = true; };
+  }, [compareList, days]);
 
   const visible = candles.slice(Math.max(0, candles.length - visibleCount));
   const chartW = svgW - YAXIS_W;
@@ -700,6 +838,27 @@ function DailyCandleChart({ ticker, height = DAILY_H, onExpand }: { ticker: stri
             );
           })}
           <text x={chartW - 6} y={14} fontSize={9} fill="var(--color-muted)" textAnchor="end" opacity={0.5}>스크롤 줌 · {visible.length}봉</text>
+          {compareList.length > 0 && visible.length > 0 && (() => {
+            const mainBase = visible[0].close;
+            if (mainBase === 0) return null;
+            return compareList.map(e => {
+              const cCandles = compareCandles.get(e.ticker) ?? [];
+              const cInRange = cCandles.filter(c => c.date >= visible[0].date && c.date <= visible[visible.length - 1].date);
+              if (cInRange.length < 2) return null;
+              const cBase = cInRange[0].close;
+              if (cBase === 0) return null;
+              const pts = cInRange.map(c => {
+                const idx = visible.findIndex(v => v.date === c.date);
+                if (idx < 0) return null;
+                const pct = (c.close - cBase) / cBase;
+                const x = idx * slotW + slotW / 2;
+                const y = scaleY(mainBase * (1 + pct), pMin, pMax, innerH);
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+              }).filter(Boolean) as string[];
+              if (pts.length < 2) return null;
+              return <polyline key={e.ticker} points={pts.join(' ')} fill="none" stroke={e.color} strokeWidth={1.5} strokeOpacity={0.85} />;
+            });
+          })()}
         </svg>
       )}
       {tooltip && (
@@ -747,6 +906,14 @@ function Modal({ onClose, title, children }: { onClose: () => void; title: strin
 // ── CandleChart4: 3+1 레이아웃 ────────────────────────────────
 export default function CandleChart4({ ticker }: { ticker: string }) {
   const [expanded, setExpanded] = useState<QuadKey | null>(null);
+  const [compareList, setCompareList] = useState<CompareEntry[]>([]);
+
+  useEffect(() => {
+    setCompareList(getCompareList());
+    function onCompare() { setCompareList(getCompareList()); }
+    window.addEventListener(COMPARE_EVENT, onCompare);
+    return () => window.removeEventListener(COMPARE_EVENT, onCompare);
+  }, []);
 
   const QUAD_TITLES: Record<QuadKey, string> = {
     q1: '금일 5분봉 (실시간)',
@@ -775,26 +942,26 @@ export default function CandleChart4({ ticker }: { ticker: string }) {
       }}>
         {/* Top row: 3 charts */}
         <div style={topCell(false)}>
-          <IntradayLineChart ticker={ticker} onExpand={() => setExpanded('q1')} />
+          <IntradayLineChart ticker={ticker} compareList={compareList} onExpand={() => setExpanded('q1')} />
         </div>
         <div style={topCell(false)}>
-          <HourlyPatternChart ticker={ticker} onExpand={() => setExpanded('q2')} />
+          <HourlyPatternChart ticker={ticker} compareList={compareList} onExpand={() => setExpanded('q2')} />
         </div>
         <div style={topCell(true)}>
-          <WeekdayPatternChart ticker={ticker} onExpand={() => setExpanded('q3')} />
+          <WeekdayPatternChart ticker={ticker} compareList={compareList} onExpand={() => setExpanded('q3')} />
         </div>
         {/* Bottom row: daily chart full width */}
         <div style={{ overflow: 'hidden', backgroundColor: 'var(--color-surface)', position: 'relative', gridColumn: '1 / -1' }}>
-          <DailyCandleChart ticker={ticker} onExpand={() => setExpanded('q4')} />
+          <DailyCandleChart ticker={ticker} compareList={compareList} onExpand={() => setExpanded('q4')} />
         </div>
       </div>
 
       {expanded && (
         <Modal onClose={() => setExpanded(null)} title={QUAD_TITLES[expanded]}>
-          {expanded === 'q1' && <IntradayLineChart ticker={ticker} height={MODAL_CHART_H} />}
-          {expanded === 'q2' && <HourlyPatternChart ticker={ticker} height={MODAL_CHART_H} />}
-          {expanded === 'q3' && <WeekdayPatternChart ticker={ticker} height={MODAL_CHART_H} />}
-          {expanded === 'q4' && <DailyCandleChart ticker={ticker} height={MODAL_CHART_H} />}
+          {expanded === 'q1' && <IntradayLineChart ticker={ticker} compareList={compareList} height={MODAL_CHART_H} />}
+          {expanded === 'q2' && <HourlyPatternChart ticker={ticker} compareList={compareList} height={MODAL_CHART_H} />}
+          {expanded === 'q3' && <WeekdayPatternChart ticker={ticker} compareList={compareList} height={MODAL_CHART_H} />}
+          {expanded === 'q4' && <DailyCandleChart ticker={ticker} compareList={compareList} height={MODAL_CHART_H} />}
         </Modal>
       )}
     </>

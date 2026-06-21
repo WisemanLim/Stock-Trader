@@ -3,6 +3,7 @@ import { getSnapshot } from '@/lib/api';
 import { formatPrice, formatPct, signalColor } from '@/lib/format';
 import CandleChart4 from '@/components/CandleChart4';
 import SimulationPanel from '@/components/SimulationPanel';
+import CompareBar from '@/components/CompareBar';
 import { Tooltip } from '@/components/Tooltip';
 import { TOOLTIPS } from '@/lib/tooltips';
 import { searchStocks } from '@/lib/stocks';
@@ -13,7 +14,7 @@ export default async function DashboardPage() {
   // 한글·특수문자 등 무효 ticker 방어 — cookie 오염 시 기본값(005930)으로 폴백
   // KRX 6자리 숫자 또는 해외 1~5자 알파벳만 허용 — 그 외(7자리 숫자 등) 폴백
   const ticker = /^([0-9]{6}|[A-Za-z]{1,5})$/.test(rawTicker) ? rawTicker : '005930';
-  const persona = cookieStore.get('st_persona')?.value ?? 'swing';
+  const persona = cookieStore.get('st_persona')?.value ?? 'scalper';
 
   let snapshot: Awaited<ReturnType<typeof getSnapshot>> | null = null;
   let connErr = false;
@@ -109,56 +110,9 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Ticker header */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
-        <h1
-          className="mono"
-          style={{ margin: 0, fontSize: 22, fontWeight: 700, color: 'var(--color-text)' }}
-        >
-          {ticker}
-        </h1>
-        {stockName != null && (
-          <span
-            style={{ fontSize: 20, fontWeight: 600, color: 'var(--color-text)' }}
-          >
-            {stockName}
-          </span>
-        )}
-        <Tooltip title={stockMarket} content={TOOLTIPS.misc.kospi}>
-          <span
-            style={{
-              padding: '2px 8px',
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: 0.8,
-              backgroundColor: stockMarket === 'KOSDAQ'
-                ? 'rgba(63,185,80,0.12)' : 'rgba(88,166,255,0.12)',
-              color: stockMarket === 'KOSDAQ'
-                ? 'var(--color-up)' : 'var(--color-accent)',
-              border: stockMarket === 'KOSDAQ'
-                ? '1px solid rgba(63,185,80,0.25)' : '1px solid rgba(88,166,255,0.25)',
-              cursor: 'help',
-            }}
-          >
-            {stockMarket}
-          </span>
-        </Tooltip>
-        <Tooltip title="페르소나" content={TOOLTIPS.misc.persona}>
-          <span
-            style={{
-              padding: '2px 8px',
-              borderRadius: 4,
-              fontSize: 11,
-              color: 'var(--color-muted)',
-              border: '1px solid var(--color-border)',
-              cursor: 'help',
-            }}
-          >
-            {persona}
-          </span>
-        </Tooltip>
-      </div>
+      {/* 페르소나 + 비교종목 바 */}
+      {/* 페르소나 + ticker header + 비교종목 바 */}
+      <CompareBar persona={persona} ticker={ticker} stockName={stockName} stockMarket={stockMarket} />
 
       {/* Metric cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>

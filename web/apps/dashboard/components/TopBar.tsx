@@ -1,11 +1,11 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from './ThemeProvider';
 import { searchStocks } from '@/lib/stocks';
 import type { StockEntry } from '@/lib/stocks';
 import { getStoredUser } from '@/lib/auth-client';
+import { toggleCompare, isInCompare, COMPARE_EVENT, getCompareList } from '@/lib/compare-stocks';
 
 // ── 조회 히스토리 (사용자별 localStorage) ──────────────────────────
 type HistoryEntry = { ticker: string; name: string };
@@ -43,14 +43,13 @@ const INDICES = [
 ];
 
 export default function TopBar() {
-  const router = useRouter();
   const [input, setInput] = useState('005930');
   const [suggestions, setSuggestions] = useState<StockEntry[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [open, setOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [userId, setUserId] = useState('');
-  const persona = 'swing';
+  const [compareTickers, setCompareTickers] = useState<string[]>([]);
   const { theme, toggle } = useTheme();
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -82,17 +81,30 @@ export default function TopBar() {
     const uid = user?.id ?? '';
     setUserId(uid);
     if (uid) setHistory(loadHistory(uid));
+    // 비교종목 초기 로드
+    setCompareTickers(getCompareList().map(e => e.ticker));
+  }, []);
+
+  // 비교종목 변경 이벤트 동기화
+  useEffect(() => {
+    function onCompareChange() {
+      setCompareTickers(getCompareList().map(e => e.ticker));
+    }
+    window.addEventListener(COMPARE_EVENT, onCompareChange);
+    return () => window.removeEventListener(COMPARE_EVENT, onCompareChange);
   }, []);
 
   const navigate = useCallback(
     (ticker: string) => {
       if (!ticker) return;
-      // URL 파라미터 노출 없이 쿠키로 ticker/persona 전달 후 홈 이동
+      // 현재 설정된 persona 쿠키 유지 (Sidebar에서 변경한 값 보존)
+      const cookieRow = document.cookie.split('; ').find(r => r.startsWith('st_persona='));
+      const currentPersona = cookieRow ? decodeURIComponent(cookieRow.split('=')[1]) : 'scalper';
       document.cookie = `st_ticker=${encodeURIComponent(ticker)}; path=/; max-age=2592000`;
-      document.cookie = `st_persona=${encodeURIComponent(persona)}; path=/; max-age=2592000`;
-      router.push('/');
+      document.cookie = `st_persona=${encodeURIComponent(currentPersona)}; path=/; max-age=2592000`;
+      window.location.assign('/');
     },
-    [router, persona],
+    [],
   );
 
   async function handleChange(val: string) {
@@ -315,37 +327,51 @@ export default function TopBar() {
                   {history.map((h) => (
                     <div
                       key={h.ticker}
-                      onMouseDown={() => handleSelectHistory(h)}
                       style={{
                         display: 'flex',
-                        justifyContent: 'space-between',
                         alignItems: 'center',
-                        padding: '6px 10px',
+                        padding: '0 10px',
                         fontSize: 12,
-                        cursor: 'pointer',
                         borderBottom: '1px solid var(--color-border)',
                       }}
                       onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(88,166,255,0.07)')}
                       onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, overflow: 'hidden' }}>
-                        <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>🕐</span>
-                        <span className="mono" style={{ color: 'var(--color-accent)', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
-                          {h.ticker}
-                        </span>
-                        {h.name && (
-                          <span style={{ color: 'var(--color-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {h.name}
-                          </span>
-                        )}
-                      </span>
-                      <span
-                        onMouseDown={(e) => handleDeleteHistory(e, h.ticker)}
-                        style={{ fontSize: 12, color: 'var(--color-muted)', cursor: 'pointer', padding: '0 4px', flexShrink: 0, lineHeight: 1 }}
-                        title="삭제"
+                      {/* 비교종목 체크박스 */}
+                      <input
+                        type="checkbox"
+                        checked={compareTickers.includes(h.ticker)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onChange={() => {
+                          toggleCompare(h.ticker, h.name);
+                          setCompareTickers(getCompareList().map(e => e.ticker));
+                        }}
+                        title="비교종목 추가/삭제"
+                        style={{ cursor: 'pointer', marginRight: 6, accentColor: 'var(--color-accent)', flexShrink: 0 }}
+                      />
+                      <div
+                        onMouseDown={() => handleSelectHistory(h)}
+                        style={{ flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', cursor: 'pointer' }}
                       >
-                        ×
-                      </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, overflow: 'hidden' }}>
+                          <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>🕐</span>
+                          <span className="mono" style={{ color: 'var(--color-accent)', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>
+                            {h.ticker}
+                          </span>
+                          {h.name && (
+                            <span style={{ color: 'var(--color-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {h.name}
+                            </span>
+                          )}
+                        </span>
+                        <span
+                          onMouseDown={(e) => handleDeleteHistory(e, h.ticker)}
+                          style={{ fontSize: 12, color: 'var(--color-muted)', cursor: 'pointer', padding: '0 4px', flexShrink: 0, lineHeight: 1 }}
+                          title="삭제"
+                        >
+                          ×
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </>
@@ -355,14 +381,11 @@ export default function TopBar() {
               {input.trim() && suggestions.map((s, i) => (
                 <div
                   key={`${s.ticker}-${i}`}
-                  onMouseDown={() => handleSelect(s)}
                   style={{
                     display: 'flex',
-                    justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '6px 10px',
+                    padding: '0 10px',
                     fontSize: 12,
-                    cursor: 'pointer',
                     backgroundColor:
                       i === activeIdx ? 'rgba(88,166,255,0.12)' : 'transparent',
                     borderBottom:
@@ -371,35 +394,45 @@ export default function TopBar() {
                         : 'none',
                   }}
                 >
-                  <span style={{ color: 'var(--color-text)', fontWeight: i === activeIdx ? 600 : 400 }}>
-                    {s.name}
-                  </span>
-                  <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        padding: '1px 4px',
-                        borderRadius: 3,
-                        backgroundColor: s.market === 'KOSPI'
-                          ? 'rgba(88,166,255,0.12)'
-                          : 'rgba(63,185,80,0.12)',
-                        color: s.market === 'KOSPI'
-                          ? 'var(--color-accent)'
-                          : 'var(--color-up)',
-                        border: s.market === 'KOSPI'
-                          ? '1px solid rgba(88,166,255,0.25)'
-                          : '1px solid rgba(63,185,80,0.25)',
-                      }}
-                    >
-                      {s.market}
+                  {/* 비교종목 체크박스 — mousedown 전파 차단으로 선택 이벤트와 분리 */}
+                  <input
+                    type="checkbox"
+                    checked={compareTickers.includes(s.ticker)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onChange={() => {
+                      toggleCompare(s.ticker, s.name);
+                      setCompareTickers(getCompareList().map(e => e.ticker));
+                    }}
+                    title="비교종목 추가/삭제"
+                    style={{ cursor: 'pointer', marginRight: 6, accentColor: 'var(--color-accent)', flexShrink: 0 }}
+                  />
+                  {/* 종목 선택 영역 */}
+                  <div
+                    onMouseDown={() => handleSelect(s)}
+                    style={{
+                      flex: 1, display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', padding: '6px 0', cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ color: 'var(--color-text)', fontWeight: i === activeIdx ? 600 : 400 }}>
+                      {s.name}
                     </span>
-                    <span
-                      className="mono"
-                      style={{ color: 'var(--color-muted)', fontSize: 11 }}
-                    >
-                      {s.ticker}
+                    <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span
+                        style={{
+                          fontSize: 10, padding: '1px 4px', borderRadius: 3,
+                          backgroundColor: s.market === 'KOSPI' ? 'rgba(88,166,255,0.12)' : 'rgba(63,185,80,0.12)',
+                          color: s.market === 'KOSPI' ? 'var(--color-accent)' : 'var(--color-up)',
+                          border: s.market === 'KOSPI' ? '1px solid rgba(88,166,255,0.25)' : '1px solid rgba(63,185,80,0.25)',
+                        }}
+                      >
+                        {s.market}
+                      </span>
+                      <span className="mono" style={{ color: 'var(--color-muted)', fontSize: 11 }}>
+                        {s.ticker}
+                      </span>
                     </span>
-                  </span>
+                  </div>
                 </div>
               ))}
             </div>

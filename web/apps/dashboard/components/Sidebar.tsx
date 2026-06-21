@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Tooltip } from './Tooltip';
 import { TOOLTIPS } from '@/lib/tooltips';
 import { clearSession, getStoredUser } from '@/lib/auth-client';
+import { clearCompareList } from '@/lib/compare-stocks';
 import MyPagePanel from './MyPagePanel';
 
 function getCookie(name: string): string | null {
@@ -41,21 +42,24 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [myPageOpen, setMyPageOpen] = useState(false);
-  const [persona, setPersona] = useState('swing');
+  const [persona, setPersona] = useState('scalper');
   const user = getStoredUser();
   const serviceStatus = useServiceHealth();
 
   useEffect(() => {
-    setPersona(getCookie('st_persona') ?? 'swing');
+    setPersona(getCookie('st_persona') ?? 'scalper');
   }, []);
 
   function handlePersonaChange(p: string) {
     document.cookie = `st_persona=${encodeURIComponent(p)}; path=/; max-age=2592000`;
     setPersona(p);
+    // CompareBar 등 클라이언트 컴포넌트 즉시 동기화 — router.push 캐시 우회
+    window.dispatchEvent(new CustomEvent('st_persona_change', { detail: p }));
     router.push('/');
   }
 
   function handleLogout() {
+    clearCompareList();
     clearSession();
     router.replace('/login');
   }
