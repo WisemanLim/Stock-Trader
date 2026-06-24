@@ -42,7 +42,7 @@ profile: `python-fastapi` (+ `rust-axum` 코어, `node-next-nest` 웹) · domain
 | F5 백테스팅              | analysis             | ✅   | 다전략 + RL(…·DPG **reinforce/a2c/ppo·GAE**) + **영속 워커풀·공유메모리(persistent)**                                                                                                                                                  |
 | F5 가상체결              | risk-engine          | ✅   | 다종목·롤링·5요인·full VAR(p)·YW + companion 복소 고유값 QR(Schur) 반경 사영 + **계정 다중화(account별 격리 원장)** · **멀티계좌 영속화 수정: `data/paper_books.json` v2(accounts 맵, v1 자동 마이그레이션), 재기동 후 전체 계좌 복원** |
 | F6.1 스캘퍼 TUI          | apps/tui             | ✅   | ratatui 호가창·P&L                                                                                                                                                                                                                     |
-| F6.2 웹 대시보드         | web                  | ✅   | Next.js + NestJS BFF + **CandleChart4 3+1 레이아웃(상단 3열: 5분봉·시간대별·요일별, 하단 전폭: 일봉 90/180/270/365일 기간 선택, TA 패턴 10종 감지: 더블바텀/탑·H&S·역H&S·상승/하락폴래그·상승/하락삼각형·쏘사나단/쏘성바람)** · 다크/라이트 테마 토글·툴팁 · TopBar 종목코드+기업명 표시 · **페르소나 기본값 scalper + TopBar 하드코딩 버그 수정(navigate 시 쿠키 실시간 읽기)** · **종목비교: `CompareBar` 2행(Row1: 페르소나\|☑ ticker 종목명 KOSPI, Row2: 비교칩 팔레트색 테두리+swatch·가격방향 텍스트 적/청), 검색/히스토리 드롭다운 체크박스, CandleChart4 4개 차트 동시 비교오버레이(Q1 % 변동 polyline·Q2/Q3 컬러 점+점선·Q4 일봉 % 변동 polyline), sessionStorage 10색 팔레트, 로그아웃 초기화** |
+| F6.2 웹 대시보드         | web                  | ✅   | Next.js + NestJS BFF + **CandleChart4 3+1 레이아웃(상단 3열: 5분봉·시간대별·요일별, 하단 전폭: 일봉 90/180/270/365일 기간 선택, TA 패턴 10종 감지: 더블바텀/탑·H&S·역H&S·상승/하락폴래그·상승/하락삼각형·쏘사나단/쏘성바람)** · 다크/라이트 테마 토글·툴팁 · TopBar 종목코드+기업명 표시 · **페르소나 기본값 scalper + TopBar 하드코딩 버그 수정(navigate 시 쿠키 실시간 읽기)** · **종목비교: `CompareBar` 2행(Row1: 페르소나\|☑ ticker 종목명 KOSPI, Row2: 비교칩 팔레트색 테두리+swatch·가격방향 텍스트 적/청), 검색/히스토리 드롭다운 체크박스, CandleChart4 4개 차트 동시 비교오버레이(Q1 % 변동 polyline·Q2/Q3 컬러 점+점선·Q4 일봉 % 변동 polyline), sessionStorage 10색 팔레트, 로그아웃 초기화** · **봉조합 BUY/SELL 신호 9종(망치형·역망치형·상승장악형·샛별형·적삼병→BUY / 유성형·하락장악형·석별형·흑삼병→SELL) Q4 일봉 오버레이** · **MarketGuidePanel 우측 floating 투자 참고 패널(탭: 캔들패턴 5종 SVG·상승주도주·업종대장주, 교육용)** |
 | F7 시뮬레이션 매수/매도  | web/risk             | ✅   | 대시보드 매수▲/매도▼ 패널(SimulationPanel) → BFF POST /api/paper/execute → risk-engine 가상체결 원장 · **예수금 추적(초기 1억원, 매수차감/매도가산, iter-38)** → 포트폴리오 현재가·종목명·손익·비중 BFF 보강(iter-36)                  |
 | F8 사용자 인증           | web                  | ✅   | 회원가입/로그인(bcryptjs+jose JWT+TOTP otplib), 예수금 기본 1억원, **Sidebar 롤업 마이페이지**(비밀번호·예수금·TOTP), AuthGuard 라우트 보호, SQLite(`node:sqlite` Node 24 내장, `globalThis` HMR 싱글톤) · **회원가입 예수금 입력 `type=number` 수정**(iter-63) · **예수금 `min=1000000` 수정 — 100만원 단위 step 유효값 오류 해소**(iter-64) · **자동로그인 AES-256-GCM 암호화 자격증명 저장(iter-69)** · **예수금 재기동 후 초기화 버그 수정(페이지 로드 시 60초 주기 재동기화)** — `iter-38~39` |
 | F6.3 알림                | agents               | ✅   | Telegram/Discord webhook                                                                                                                                                                                                               |
@@ -144,10 +144,11 @@ services/ingest/.env.local, services/analysis/.env.local, ...
 ```bash
 # ── 환경 초기화 (첫 설치 · node_modules 재설치 시) ────────────
 make setup               # ENV=local (기본) — web/node_modules·services/*/.venv 삭제·재설치 + uv sync
-make setup-local         # local 단축키 (서비스 중지 → node_modules·.venv 삭제 → 재설치 → make local-all 로 기동)
-make setup-dev           # dev  단축키  — 재설치 + docker compose pull
+make setup-local         # local 단축키 (서비스 중지 → rust-setup → node_modules·.venv 삭제 → 재설치 → make local-all 로 기동)
+make setup-dev           # dev  단축키  — rust-setup + 재설치 + docker compose pull
 make setup-staging       # staging 단축키 — 재설치 + 이미지 빌드
 make setup-prod          # prod  단축키  — 이미지 빌드만
+make rust-setup          # Rust/cargo 미설치 시 rustup 으로 자동 설치 (tools/install-rust.sh)
 
 make up                  # 인프라만 (postgres+pgvector, redis). 기본 ENV=local
 make up ENV=dev          # ENV 전달 → compose env_file=.env.dev 선택

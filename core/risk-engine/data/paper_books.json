@@ -3,7 +3,7 @@
   "accounts": {
     "default": {
       "applied_orders": {},
-      "cash": 1841652.5389241297,
+      "cash": 617468.93892413,
       "halted": false,
       "positions": {
         "000660": {
@@ -37,9 +37,9 @@
           "ticker": "208350"
         },
         "263860": {
-          "avg_price": 13373.99584825871,
-          "cost_basis": 1337399.584825871,
-          "quantity": 100.0,
+          "avg_price": 12807.915924129356,
+          "cost_basis": 2561583.184825871,
+          "quantity": 200.0,
           "ticker": "263860"
         },
         "402030": {

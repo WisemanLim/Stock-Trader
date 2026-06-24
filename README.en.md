@@ -42,7 +42,7 @@ profile: `python-fastapi` (+ `rust-axum` core, `node-next-nest` web) · domain: 
 | F5 Backtesting | analysis | ✅ | Multi-strategy + RL (…·DPG **reinforce/a2c/ppo·GAE**) + **persistent worker pool·shared memory** |
 | F5 Paper trading | risk-engine | ✅ | Multi-ticker·rolling·5-factor·full VAR(p)·YW + companion complex eigenvalue QR(Schur) radius projection + **multi-account (isolated per-account ledger)** |
 | F6.1 Scalper TUI | apps/tui | ✅ | ratatui order book·P&L |
-| F6.2 Web dashboard | web | ✅ | Next.js + NestJS BFF + **CandleChart4 3+1 layout (top 3: 5m intraday · hourly avg-return · weekday avg-return; full-width: daily candles 90/180/270/365d, TA 10 patterns)** · dark/light theme toggle · tooltips · TopBar ticker+name display · **persona default scalper + TopBar hardcode bug fix (cookie read on navigate)** · **compare-stocks: `CompareBar` 2-row (Row1: persona\|☑ ticker name KOSPI badge, Row2: palette-colored chips with price-direction text red/blue), search+history dropdown checkboxes, CandleChart4 simultaneous overlay on all 4 charts (Q1 % change polylines · Q2/Q3 colored dots+dashed lines · Q4 daily % change polylines), sessionStorage 10-color palette, cleared on logout** |
+| F6.2 Web dashboard | web | ✅ | Next.js + NestJS BFF + **CandleChart4 3+1 layout (top 3: 5m intraday · hourly avg-return · weekday avg-return; full-width: daily candles 90/180/270/365d, TA 10 patterns)** · dark/light theme toggle · tooltips · TopBar ticker+name display · **persona default scalper + TopBar hardcode bug fix (cookie read on navigate)** · **compare-stocks: `CompareBar` 2-row (Row1: persona\|☑ ticker name KOSPI badge, Row2: palette-colored chips with price-direction text red/blue), search+history dropdown checkboxes, CandleChart4 simultaneous overlay on all 4 charts (Q1 % change polylines · Q2/Q3 colored dots+dashed lines · Q4 daily % change polylines), sessionStorage 10-color palette, cleared on logout** · **candlestick-combo BUY/SELL signals 9 patterns (Hammer·InvHammer·BullEngulfing·MorningStar·3WhiteSoldiers→BUY / ShootingStar·BearEngulfing·EveningStar·3BlackCrows→SELL) Q4 daily overlay** · **MarketGuidePanel right-side floating reference panel (tabs: 5 candle pattern SVG glyphs · leading theme stocks · sector leaders, educational use only)** |
 | F7 Simulation buy/sell | web/risk | ✅ | Dashboard buy▲/sell▼ panel (SimulationPanel) → BFF POST /api/paper/execute → risk-engine paper ledger · **virtual cash tracking (initial ₩100M, deduct on buy / add on sell, iter-38)** → portfolio enriched with current price · name · P&L · weight via BFF (iter-36) |
 | F8 User Auth | web | ✅ | Register/Login (bcryptjs + jose JWT + TOTP otplib), default deposit ₩100M, **Sidebar roll-up MyPage** (password · deposit · TOTP), AuthGuard route protection, SQLite (`node:sqlite` Node 24 built-in, `globalThis` HMR singleton) · **register deposit input `type=number` fix** (iter-63) · **deposit `min=1000000` fix — browser step-validity error on multiples of ₩1M resolved** (iter-64) · **auto-login AES-256-GCM encrypted credential storage (iter-69)** · **deposit reset-to-default bug fixed (60s re-sync on page load)** — `iter-38~39` |
 | F6.3 Alerts | agents | ✅ | Telegram/Discord webhook |
@@ -140,10 +140,11 @@ services/ingest/.env.local, services/analysis/.env.local, ...
 ```bash
 # ── Environment setup (first install · stale node_modules / .venv) ──
 make setup               # ENV=local (default) — delete web/node_modules + services/*/.venv, reinstall + uv sync
-make setup-local         # local shortcut (stops services → reinstall → ready for make local-all)
-make setup-dev           # dev shortcut  — reinstall + docker compose pull
+make setup-local         # local shortcut (stops services → rust-setup → delete node_modules·.venv → reinstall → make local-all)
+make setup-dev           # dev shortcut  — rust-setup + reinstall + docker compose pull
 make setup-staging       # staging shortcut — reinstall + image build
 make setup-prod          # prod shortcut  — image build only
+make rust-setup          # install Rust/cargo via rustup if not present (tools/install-rust.sh)
 
 make up                  # infra only (postgres+pgvector, redis). Default ENV=local
 make up ENV=dev          # pass ENV → compose picks env_file=.env.dev

@@ -99,7 +99,7 @@
 | F4 리스크 엔진 | risk-engine | ✅ Stop-Loss·Trailing·Fail-Safe |
 | F5 백테스팅 | analysis | ✅ RL(PPO/A2C)·가상체결 |
 | F6.1 TUI | apps/tui | ✅ ratatui 호가창·P&L |
-| F6.2 웹 대시보드 | web | ✅ Next.js + NestJS BFF · 다크/라이트 테마 · 캔들 툴팁 · 서브페이지 · **전체 UI 40개 항목 인라인 툴팁** |
+| F6.2 웹 대시보드 | web | ✅ Next.js + NestJS BFF · 다크/라이트 테마 · 캔들 툴팁 · 서브페이지 · **전체 UI 40개 항목 인라인 툴팁** · **CandleChart4 봉조합 BUY/SELL 신호 9종** · **MarketGuidePanel 투자 참고 패널(캔들패턴·주도주·업종대장주)** |
 | F6.3 알림/제어 | agents | ✅ Telegram/Discord·긴급청산 |
 
 ### 3.2 KRX 분석 기반 갭 (v1 → v2 수정/보완 목표)
@@ -380,6 +380,25 @@
 - **삭제**: 항목별 ×버튼(단건) + "전체 삭제" 버튼
 - **모드 분기**: 빈 입력 → 히스토리; 텍스트 입력 → 기존 자동완성(변경 없음)
 - **빈 dropdown 방어**: 히스토리 0건 + 자동완성 0건이면 드롭다운 비표시
+
+#### F6.2.15 CandleChart4 봉조합 BUY/SELL 신호 ✅ (2026-06-24 구현)
+
+- **위치**: Q4 일봉 차트 캔들 오버레이
+- **신호 9종**:
+  - BUY(▲): 망치형·역망치형·상승장악형·샛별형·적삼병
+  - SELL(▽): 유성형·하락장악형·석별형·흑삼병
+- **판정**: 최신 봉 OHLC 결정적 판정 + 직전 6봉 선형회귀 기울기(추세 맥락, ±0.002 임계)
+- **표시**: 캔들 위/아래 SVG 삼각형+패턴명 텍스트, 기존 TA 패턴 10종 신호와 병렬 표시
+
+#### F6.2.16 MarketGuidePanel 투자 참고 패널 ✅ (2026-06-24 구현)
+
+- **위치**: 대시보드·포트폴리오 우측 floating 탭 패널 (접기/펼치기)
+- **탭 3종**:
+  - 캔들 패턴: 대표 5종(망치형·장악형·역망치형·유성형·도지형) SVG 글리프 + 매수(▲)/매도(▼)/관망(◆) 신호 태그 + 설명
+  - 상승 주도주(테마): 테마별 대표 종목 배열
+  - 업종 대장주: 업종별 대표 종목 배열
+- **색상**: 한국 관례(상승=적색 `--color-up`, 하락=청색 `--color-down`)
+- **교육용**: 투자 권유 아님, 인포그래픽 기반 참고 정보
 
 ---
 
@@ -824,6 +843,7 @@
 | v2.30 | 2026-06-19 | F5 백테스팅 화면 통합: 규칙기반(SMA교차·RSI임계·MACD·Q-러닝) + 강화학습(DQN/PPO/A2C/QR-DQN) 2탭을 `/backtest` 단일 페이지로 통합. 종목코드 공유 입력창, 규칙기반 마운트 시 자동실행, 거래내역 펼침, 강화학습 수 분 소요 안내. 전략/스크리너 페이지 백테스트 탭 제거 → "↺ 백테스팅 →" 배너로 대체. API 응답 필드 매핑 수정(`total_return_pct/100→total_return`, `num_trades→total_trades`). TS clean. |
 | v2.31 | 2026-06-20 | `make db-reset` PostgreSQL 미삭제 버그 수정: non-local(dev/staging/prod) 분기에서 `docker volume rm stock-trader_pgdata` 가 `echo` 힌트만 출력, 실제 미실행이던 버그 수정 → 실제 볼륨 삭제 실행. auth.db(dashboard-data) + PostgreSQL(pgdata) 동시 초기화. pub-Stock-Trader 동일 수정. |
 | v2.30 | 2026-06-20 | F8.14–F8.15 버그수정 + 환경 구동 수정: ① F8.15 회원가입 예수금 risk-engine 미반영 — `register/route.ts` BFF `POST /api/paper/set-cash` sync 추가(2s timeout, 미기동 시 무시). ② F8.14 예수금 입력 step 유효값 오류 — `min="1"` → `min="1000000"` (`step=1000000` 불일치로 정상값 브라우저 거부). ③ docker-compose.yml `env_file` 기본값 `dev` → `local`(7개 서비스). ④ postgres healthcheck `-d ${POSTGRES_DB}` 추가. ⑤ Makefile `prod-all`·`prod-stop`·`prod-logs`·`prod-status`·`prod-build` 타겟 추가. ⑥ `.env.example`·`.env.prod`·`core/risk-engine/.env.prod` 누락 파일 추가. |
+| v2.44 | 2026-06-24 | F6.2.15 CandleChart4 봉조합 BUY/SELL 신호 9종(BUY: 망치형·역망치형·상승장악형·샛별형·적삼병 / SELL: 유성형·하락장악형·석별형·흑삼병) — 최신 봉 OHLC 결정적 판정 + 직전 6봉 기울기 추세 맥락(±0.002 임계). Q4 일봉 오버레이 표시. F6.2.16 MarketGuidePanel 신규 — 대시보드·포트폴리오 우측 floating 투자 참고 패널(탭 3종: 캔들패턴 5종 SVG 글리프·매수/매도/관망 신호·상승주도주·업종대장주). 교육용, 투자 권유 아님. |
 | v2.43 | 2026-06-22 | F6.2.14 TopBar 종목조회 후 대시보드 미갱신 버그 수정: `navigate()` 내부 `router.push('/')` → `window.location.assign('/')` 교체. 동일 URL(`/`)에서 `router.push('/')`는 Next.js App Router 라우터 캐시에서 서버 컴포넌트 재실행을 생략 → `st_ticker` 쿠키 변경이 `page.tsx`에 반영되지 않음. `window.location.assign('/')` 은 브라우저 전체 재요청으로 쿠키 반영 보장. 미사용 `useRouter`/`router` 제거. TS clean. |
 | v2.42 | 2026-06-22 | F6.2.14 CompareBar 2행 레이아웃 + CandleChart4 비교종목 오버레이: ① `CompareBar` 완전 재작성 — Row1: `[페르소나] | [☑] ticker 종목명 [KOSPI]`(TickerHeader 흡수, 체크박스로 현재 종목 비교추가·제거), Row2: 비교칩(팔레트 색상 테두리+swatch, 가격방향 텍스트 색상 적/청). `page.tsx` `TickerHeader` 제거 → `CompareBar`에 `stockName`/`stockMarket` props 전달. ② `CandleChart4` 비교 오버레이 — `COMPARE_EVENT` 구독으로 `compareList` 실시간 업데이트, 4개 서브차트에 전달: Q1(금일5분봉) 비교종목 인트라데이 fetch → 세션 시가 대비 % 변동 normalize → 주종목 가격 척도 매핑 polyline; Q2(시간대별 평균수익률) 비교종목 시간대별 수익률 → 컬러 점+점선; Q3(요일별 평균수익률) 비교종목 요일별 수익률 → 컬러 점+점선; Q4(일봉) 비교종목 일봉 fetch → 첫 일봉 대비 % 변동 주종목 척도 polyline. 모달 확대 시에도 동일 적용. TS clean. |
 | v2.41 | 2026-06-21 | F6.2.14 CompareBar 레이아웃 수정: `flexWrap: 'wrap'` → `flexWrap: 'nowrap'` + `overflowX: 'auto'` — 페르소나 뱃지와 비교칩이 같은 행에 표시(이전: `scalper |` 만 1행, 칩이 2행으로 분리). TS clean. |
