@@ -11,7 +11,10 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko" suppressHydrationWarning>
+      {/* suppressHydrationWarning: Grammarly 등 확장프로그램이 <body>에 data-gr-* 속성을
+          주입해 hydration 불일치가 발생 — body 한정으로 경고만 억제(자식은 정상 검증). */}
       <body
+        suppressHydrationWarning
         style={{
           margin: 0,
           display: 'flex',

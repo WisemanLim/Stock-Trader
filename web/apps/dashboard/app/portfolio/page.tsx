@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { getToken } from '@/lib/auth-client';
 import { getAccount, setStoredAccount, DEFAULT_ACCOUNT } from '@/lib/account';
+import MarketGuidePanel from '@/components/MarketGuidePanel';
 
 const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? 'http://localhost:3002';
 
@@ -316,6 +317,7 @@ export default function PortfolioPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <MarketGuidePanel defaultTab="theme" />
       {/* Title + legend */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>◈ 포트폴리오</h2>

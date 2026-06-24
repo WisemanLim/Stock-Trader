@@ -3,7 +3,7 @@
         local-all local-dev local-staging local-stop local-logs local-status \
         prod-all prod-stop prod-logs prod-status prod-build \
         dev-all mpm mpm-stop mpm-status mpm-logs mpm-check sync db-reset test-py test-rust test-web test build deploy \
-        setup setup-local setup-dev setup-staging setup-prod
+        setup setup-local setup-dev setup-staging setup-prod rust-setup
 
 # 환경 선택: make <target> ENV=local|dev|staging|prod  (기본 local)
 ENV ?= local
@@ -27,7 +27,13 @@ down:
 # make setup-prod         # prod 단축키  — 이미지 빌드만
 setup: setup-$(ENV)
 
-setup-local: local-stop
+# Rust(cargo) 부트스트랩 — 미설치 시 rustup 으로 플랫폼 자동 감지 설치(~/.cargo).
+# local/dev 는 호스트에서 risk-engine·tui 를 직접 빌드하므로 필요. staging/prod 는
+# Docker 이미지 빌드라 호스트 cargo 불필요.
+rust-setup:
+	@bash tools/install-rust.sh
+
+setup-local: local-stop rust-setup
 	@echo "── local 환경 초기화 ──────────────────────────────────────"
 	rm -rf web/node_modules web/apps/*/node_modules web/packages/*/node_modules
 	rm -rf services/*/.venv
@@ -38,7 +44,7 @@ setup-local: local-stop
 	cd services/agents   && uv sync --dev
 	@echo "완료 → make local-all"
 
-setup-dev: local-stop
+setup-dev: local-stop rust-setup
 	@echo "── dev 환경 초기화 ────────────────────────────────────────"
 	rm -rf web/node_modules web/apps/*/node_modules web/packages/*/node_modules
 	rm -rf services/*/.venv
@@ -105,9 +111,9 @@ dev-agents:
 
 # ── Rust 서비스 직접 실행 (.env.$(ENV) 를 환경변수로 로드 후 실행) ────────────────
 dev-risk:
-	set -a; . ./.env.$(ENV); set +a; cd core/risk-engine && cargo run
+	. $$HOME/.cargo/env 2>/dev/null || true; set -a; . ./.env.$(ENV); set +a; cd core/risk-engine && cargo run
 dev-tui:
-	set -a; . ./.env.$(ENV); set +a; cd apps/tui && cargo run
+	. $$HOME/.cargo/env 2>/dev/null || true; set -a; . ./.env.$(ENV); set +a; cd apps/tui && cargo run
 
 # ── Web (Next.js dashboard + NestJS BFF) ────────────────────────────────────────
 dev-web:
@@ -181,7 +187,7 @@ test-py:
 	cd services/ingest  && uv run pytest
 	cd services/agents  && uv run pytest
 test-rust:
-	cargo test --workspace
+	. $$HOME/.cargo/env 2>/dev/null || true; cargo test --workspace
 test-web:
 	cd web && pnpm -r test
 test: test-py test-rust test-web

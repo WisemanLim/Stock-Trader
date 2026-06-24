@@ -4,6 +4,7 @@ import { formatPrice, formatPct, signalColor } from '@/lib/format';
 import CandleChart4 from '@/components/CandleChart4';
 import SimulationPanel from '@/components/SimulationPanel';
 import CompareBar from '@/components/CompareBar';
+import MarketGuidePanel from '@/components/MarketGuidePanel';
 import { Tooltip } from '@/components/Tooltip';
 import { TOOLTIPS } from '@/lib/tooltips';
 import { searchStocks } from '@/lib/stocks';
@@ -91,6 +92,7 @@ export default async function DashboardPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <MarketGuidePanel defaultTab="candle" />
       {/* Connection error banner */}
       {connErr && (
         <div

@@ -234,6 +234,52 @@ function detectPatterns(candles: Candle[]): PatternSignal[] {
     }
   }
 
+  // ── 캔들(단·복합 봉) 패턴 — 최신 봉 기준 사세요(BUY)/팔아요(SELL) 신호 ─────
+  // 첨부 인포그래픽의 봉조합 신호를 표준 캔들 패턴으로 구현(OHLC 결정적 판정).
+  const body  = (c: Candle) => Math.abs(c.close - c.open);
+  const upSh  = (c: Candle) => c.high - Math.max(c.open, c.close);
+  const loSh  = (c: Candle) => Math.min(c.open, c.close) - c.low;
+  const bull  = (c: Candle) => c.close > c.open;
+  const bear  = (c: Candle) => c.close < c.open;
+  // 신호봉 직전 6봉 종가 기울기(정규화) — 추세 맥락 판정.
+  const trendBefore = (idx: number) => {
+    const seg = closes.slice(Math.max(0, idx - 6), idx);
+    return seg.length < 3 ? 0 : linRegSlope(seg) / (seg[0] || 1);
+  };
+
+  const L = n - 1;
+  const c0 = candles[L], c1 = candles[L - 1], c2 = candles[L - 2];
+  const downBefore = trendBefore(L) < -0.002;
+  const upBefore   = trendBefore(L) > 0.002;
+
+  // 망치형 (BUY): 하락 후 긴 아래꼬리 + 작은 몸통
+  if (downBefore && body(c0) > 0 && loSh(c0) >= body(c0) * 2 && upSh(c0) <= body(c0))
+    signals.push({ type: 'BUY', label: '망치형', candleIndex: L });
+  // 역망치형 (BUY): 바닥권에서 긴 위꼬리 + 작은 몸통
+  if (downBefore && body(c0) > 0 && upSh(c0) >= body(c0) * 2 && loSh(c0) <= body(c0))
+    signals.push({ type: 'BUY', label: '역망치형', candleIndex: L });
+  // 유성형 (SELL): 상승 후 긴 위꼬리 + 작은 몸통
+  if (upBefore && body(c0) > 0 && upSh(c0) >= body(c0) * 2 && loSh(c0) <= body(c0))
+    signals.push({ type: 'SELL', label: '유성형', candleIndex: L });
+  // 상승장악형 (BUY): 음봉 뒤 직전 몸통을 덮는 큰 양봉
+  if (bear(c1) && bull(c0) && c0.close >= c1.open && c0.open <= c1.close && body(c0) > body(c1))
+    signals.push({ type: 'BUY', label: '상승장악형', candleIndex: L });
+  // 하락장악형 (SELL): 양봉 뒤 직전 몸통을 덮는 큰 음봉
+  if (bull(c1) && bear(c0) && c0.open >= c1.close && c0.close <= c1.open && body(c0) > body(c1))
+    signals.push({ type: 'SELL', label: '하락장악형', candleIndex: L });
+  // 샛별형 (BUY): 음봉 + 작은 몸통 + 큰 양봉 (3봉 상승 반전)
+  if (bear(c2) && body(c1) < body(c2) * 0.5 && bull(c0) && c0.close > (c2.open + c2.close) / 2)
+    signals.push({ type: 'BUY', label: '샛별형', candleIndex: L });
+  // 석별형 (SELL): 양봉 + 작은 몸통 + 큰 음봉 (3봉 하락 반전)
+  if (bull(c2) && body(c1) < body(c2) * 0.5 && bear(c0) && c0.close < (c2.open + c2.close) / 2)
+    signals.push({ type: 'SELL', label: '석별형', candleIndex: L });
+  // 적삼병 (BUY): 연속 3 양봉, 종가 상승
+  if (bull(c0) && bull(c1) && bull(c2) && c0.close > c1.close && c1.close > c2.close)
+    signals.push({ type: 'BUY', label: '적삼병', candleIndex: L });
+  // 흑삼병 (SELL): 연속 3 음봉, 종가 하락
+  if (bear(c0) && bear(c1) && bear(c2) && c0.close < c1.close && c1.close < c2.close)
+    signals.push({ type: 'SELL', label: '흑삼병', candleIndex: L });
+
   const seen = new Set<string>();
   return signals.filter(s => {
     const key = `${s.type}:${s.label}`;
