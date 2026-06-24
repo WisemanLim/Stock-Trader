@@ -2,7 +2,8 @@
 .PHONY: up up-app down dev-analysis dev-rag dev-ingest dev-agents dev-risk dev-tui dev-web \
         local-all local-dev local-staging local-stop local-logs local-status \
         prod-all prod-stop prod-logs prod-status prod-build \
-        dev-all mpm mpm-stop mpm-status mpm-logs mpm-check sync db-reset test-py test-rust test-web test build deploy
+        dev-all mpm mpm-stop mpm-status mpm-logs mpm-check sync db-reset test-py test-rust test-web test build deploy \
+        setup setup-local setup-dev setup-staging setup-prod
 
 # 환경 선택: make <target> ENV=local|dev|staging|prod  (기본 local)
 ENV ?= local
@@ -17,6 +18,49 @@ up-app:
 	set -a; . ./.env.$(ENV); set +a; ENV=$(ENV) docker compose --profile app up -d
 down:
 	ENV=$(ENV) docker compose --profile app down --remove-orphans
+
+# ── 환경 초기화 (의존성 재설치 · 컨테이너 준비) ──────────────────────────────────
+# make setup              # ENV=local (기본) — web/node_modules 삭제·재설치 + uv sync
+# make setup-local        # local 단축키
+# make setup-dev          # dev 단축키  — + docker compose pull
+# make setup-staging      # staging 단축키 — + 이미지 빌드
+# make setup-prod         # prod 단축키  — 이미지 빌드만
+setup: setup-$(ENV)
+
+setup-local: local-stop
+	@echo "── local 환경 초기화 ──────────────────────────────────────"
+	rm -rf web/node_modules web/apps/*/node_modules web/packages/*/node_modules
+	rm -rf services/*/.venv
+	cd web && pnpm install
+	cd services/analysis && uv sync --dev
+	cd services/rag      && uv sync --dev
+	cd services/ingest   && uv sync --dev
+	cd services/agents   && uv sync --dev
+	@echo "완료 → make local-all"
+
+setup-dev: local-stop
+	@echo "── dev 환경 초기화 ────────────────────────────────────────"
+	rm -rf web/node_modules web/apps/*/node_modules web/packages/*/node_modules
+	rm -rf services/*/.venv
+	cd web && pnpm install
+	cd services/analysis && uv sync --dev
+	cd services/rag      && uv sync --dev
+	cd services/ingest   && uv sync --dev
+	cd services/agents   && uv sync --dev
+	set -a; . ./.env.dev; set +a; ENV=dev docker compose pull
+	@echo "완료 → make local-dev  또는  make up ENV=dev"
+
+setup-staging:
+	@echo "── staging 환경 초기화 ────────────────────────────────────"
+	rm -rf web/node_modules web/apps/*/node_modules web/packages/*/node_modules
+	cd web && pnpm install
+	set -a; . ./.env.staging; set +a; ENV=staging docker compose --profile app build
+	@echo "완료 → make up-app ENV=staging"
+
+setup-prod:
+	@echo "── prod 환경 초기화 ───────────────────────────────────────"
+	set -a; . ./.env.prod; set +a; ENV=prod docker compose -f docker-compose.yml --profile app build
+	@echo "완료 → make prod-all"
 
 # ── 의존성 일괄 동기화 ───────────────────────────────────────────────────────────
 sync:

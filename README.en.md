@@ -138,6 +138,13 @@ services/ingest/.env.local, services/analysis/.env.local, ...
 ### A) docker compose (multi-service)
 
 ```bash
+# ── Environment setup (first install · stale node_modules / .venv) ──
+make setup               # ENV=local (default) — delete web/node_modules + services/*/.venv, reinstall + uv sync
+make setup-local         # local shortcut (stops services → reinstall → ready for make local-all)
+make setup-dev           # dev shortcut  — reinstall + docker compose pull
+make setup-staging       # staging shortcut — reinstall + image build
+make setup-prod          # prod shortcut  — image build only
+
 make up                  # infra only (postgres+pgvector, redis). Default ENV=local
 make up ENV=dev          # pass ENV → compose picks env_file=.env.dev
 make up-app              # full app stack (app profile) as containers

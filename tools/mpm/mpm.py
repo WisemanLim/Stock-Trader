@@ -31,7 +31,7 @@ SERVICES = [
     {"name": "agents", "group": "py", "port": 8004,
      "cmd": "cd services/agents && APP_ENV={env} uv run uvicorn app.main:app --reload --port 8004"},
     {"name": "risk", "group": "rust", "port": 3001,
-     "cmd": "bash -c 'set -a; . ./.env.{env}; set +a; cd core/risk-engine && cargo run'"},
+     "cmd": "bash -c '. $HOME/.cargo/env 2>/dev/null || true; set -a; . ./.env.{env}; set +a; cd core/risk-engine && cargo run'"},
     {"name": "web", "group": "web", "port": 3000,
      "cmd": "cd web && pnpm -r dev"},
 ]
