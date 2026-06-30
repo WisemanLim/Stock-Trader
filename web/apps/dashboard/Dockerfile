@@ -9,6 +9,10 @@ COPY packages/shared/package.json ./packages/shared/
 RUN pnpm install --frozen-lockfile
 COPY apps/dashboard ./apps/dashboard
 COPY packages/shared ./packages/shared
+ARG NEXT_PUBLIC_BFF_URL=http://localhost:3002
+ARG NEXT_PUBLIC_RISK_ENGINE_URL=http://localhost:3001
+ENV NEXT_PUBLIC_BFF_URL=$NEXT_PUBLIC_BFF_URL
+ENV NEXT_PUBLIC_RISK_ENGINE_URL=$NEXT_PUBLIC_RISK_ENGINE_URL
 RUN pnpm --filter @stock-trader/dashboard build
 
 FROM node:22-alpine
